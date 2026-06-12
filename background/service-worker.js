@@ -736,4 +736,4 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
-console.log('[ServiceWorker] ✅ 银狐木马检测扩展 v1.1.0 已就绪');
+console.log('[ServiceWorker] ✅ 银狐木马检测扩展 v1.2.0 已就绪');
