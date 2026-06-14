@@ -4,18 +4,19 @@
  * 实现 5 规则评分体系，总分 >= 100 分时判定为危险网站。
  *
  * @module scoring-engine
- * @version 1.2.1
+ * @version 1.2.2
  *
  * 评分规则：
- *   规则一 域名仿冒       → 60 分 | 4 层递进：子串包含 → 段级关键词 → 可疑TLD → 编辑距离
+ *   规则一 域名仿冒       → 60 分 | 5 层递进：子串包含 → 段级关键词 → 可疑TLD → 关键词堆叠 → 编辑距离
  *   规则二 压缩包下载     → 40 分 | 域名已有 >=30 分嫌疑时给高分，否则 10 分弱信号
- *   规则三 ICP 备案缺失   → 50 分 | 对所有网站检测 ICP 备案号（不再限制 .cn 或中国品牌）
- *   规则四 链接分析       → 最高 70 分 | Part A (同页/死链/重复链接) + Part B (外链/下载按钮/文件)
- *   规则五 AI 生成特征    → 30 分 | HTML 简陋 + 无框架 + 内容丰富 = 疑似 AI 钓鱼页面
+ *   规则三 ICP 备案缺失   → 50 分 | 对所有网站检测 ICP 备案号
+ *   规则四 链接分析       → 最高 70 分 | Part A (同页/死链/重复链接) + Part B (下载按钮/压缩包链接)
+ *   规则五 代码工程化     → 最高 30 分 | 三信号组合判定（DOM复杂度+框架检测+外部资源），2信号+20，3信号+30
  *
- * 设计原则：
- *   - 所有规则方法均为纯同步计算，不发起网络请求（数据由 Content Script 预采集）
- *   - 规则可独立调用（如规则二支持下载事件单独触发后重新计算）
+ * 优化策略：
+ *   - 官方网站早期退出：域名+ICP 均确认安全后跳过规则四/五
+ *   - 规则四 Part B-b 仅对压缩包链接加分，普通文件链接不再单独计分
+ *   - 规则五区分三信号组合：DOM节点数+框架标记+外部资源，避免对正常简单页面误报
  */
 
 import { DomainDatabase } from './domain-database.js';
@@ -23,7 +24,7 @@ import { IcpUtils } from './icp-utils.js';
 import { UrlUtils } from '../utils/url-utils.js';
 import {
   SCORE_THRESHOLD, SCORE_RULE_1, SCORE_RULE_2_HIGH, SCORE_RULE_2_LOW,
-  SCORE_RULE_3, SCORE_RULE_5, RISK_LEVEL,
+  SCORE_RULE_3, SCORE_RULE_5, SCORE_RULE_5_PARTIAL, RISK_LEVEL,
   SCORE_RULE_4A_SAME_PAGE, SCORE_RULE_4A_DEAD_LINK,
   SCORE_RULE_4A_DUPLICATE_LINK, SCORE_RULE_4A_DOWNLOAD_LINK_BONUS,
   SCORE_RULE_4B_DOWNLOAD_BTN, SCORE_RULE_4B_FILE_LINK, SCORE_RULE_4B_ARCHIVE_LINK,
@@ -49,13 +50,30 @@ export class ScoringEngine {
     const existingScore = result1.score;
 
     // 规则三：ICP检测
-    const result3 = this._evaluateRule3(domain, pageText, icpStrings, result1);
+    const result3 = this._evaluateRule3(domain, pageText, icpStrings);
 
-    // 规则四：链接分析（同步，无需网络）
-    const result4 = this._evaluateRule4(linkMetrics, domain);
+    // 优化：域名检测和ICP检测均确认安全 → 跳过规则四/五（官方网站早期退出）
+    const isConfirmedOfficial = (
+      !result1.triggered && !result3.triggered &&
+      result1.detailCN.startsWith('✓') && result3.detailCN.startsWith('✓')
+    );
 
-    // 规则五：代码工程化
-    const result5 = this._evaluateRule5(pageMetrics, domain);
+    let result4, result5;
+    if (isConfirmedOfficial) {
+      result4 = {
+        score: 0, triggered: false,
+        detail: '官方网站，跳过链接分析',
+        detailCN: '✓ 链接分析: 官方网站'
+      };
+      result5 = {
+        score: 0, triggered: false,
+        detail: '官方网站，跳过代码工程化检查',
+        detailCN: '✓ 代码工程化: 官方网站'
+      };
+    } else {
+      result4 = this._evaluateRule4(linkMetrics, domain);
+      result5 = this._evaluateRule5(pageMetrics, domain);
+    }
 
     // 规则二从下载状态获取（由下载事件异步触发）
     const result2 = this._evaluateRule2(downloadState, existingScore);
@@ -148,13 +166,23 @@ export class ScoringEngine {
   }
 
   // ==================== 规则三：ICP备案号缺失 (50分) ====================
-  static _evaluateRule3(domain, pageText, icpStrings, rule1Result) {
+  /**
+   * ICP 备案检测。
+   *
+   * 判定链路（不再依赖域名推测国籍）：
+   *   1. 官方域名                       → 跳过（0 分）
+   *   2. 页面中找到 ICP 备案号           → 安全（0 分）
+   *   3. 未找到且站点在外国豁免白名单中    → 跳过（0 分，确定无需备案）
+   *   4. 未找到但页面有显著中文内容       → +50 分（中国站点缺少备案）
+   *   5. 未找到、不在白名单、也无中文内容  → +20 分（弱信号，不确定）
+   */
+  static _evaluateRule3(domain, pageText, icpStrings) {
     const result = {
       score: 0, triggered: false,
       detail: '', detailCN: '', icpFound: false, icpNumbers: []
     };
 
-    // 如果是官方域名本尊，跳过
+    // 1. 官方域名本尊 → 跳过
     const official = DomainDatabase.findByDomain(domain);
     if (official) {
       result.detail = '官方网站，ICP检查通过';
@@ -162,7 +190,7 @@ export class ScoringEngine {
       return result;
     }
 
-    // 对所有网站搜索ICP备案号
+    // 2. 搜索 ICP 备案号
     const icpResult = IcpUtils.searchIcpNumber(pageText, icpStrings);
 
     if (icpResult.found) {
@@ -170,12 +198,31 @@ export class ScoringEngine {
       result.icpNumbers = icpResult.numbers;
       result.detail = `检测到ICP备案号: ${icpResult.numbers[0]}`;
       result.detailCN = `✓ ICP备案: 已检测到 (${icpResult.numbers[0]})`;
-    } else {
+      return result;
+    }
+
+    // 3. 未找到 → 判定是否需要备案
+    // 3a. 外国站点豁免白名单 → 确定不需要 ICP
+    if (IcpUtils.isIcpExempt(domain)) {
+      result.detail = `外国站点（${domain}），ICP检查不适用`;
+      result.detailCN = '- ICP备案: 外国站点（不适用）';
+      return result;
+    }
+
+    // 3b. 页面内容检测：有显著中文内容 → 中国站点，必须有 ICP
+    const cjkResult = IcpUtils.detectCJKContent(pageText);
+    if (cjkResult.hasCJK) {
       result.score = SCORE_RULE_3;  // +50
       result.triggered = true;
-      result.detail = `未检测到ICP备案号（域名${domain}）`;
+      result.detail = `未检测到ICP备案号（域名${domain}，页面含${cjkResult.cjkCount}个中文字符，占比${(cjkResult.cjkRatio * 100).toFixed(1)}%）`;
       result.detailCN = `✗ ICP备案: 未检测到备案号`;
+      return result;
     }
+
+    // 3c. 不在白名单 + 无 CJK 内容 → 弱信号
+    result.score = 20;
+    result.detail = `无中文内容且非已知外国站点（域名${domain}），缺少ICP为弱信号`;
+    result.detailCN = `⚠ ICP备案: 未检测到备案号（弱信号）`;
 
     return result;
   }
@@ -190,8 +237,7 @@ export class ScoringEngine {
    * │  ①+②+③ 可叠加（最高+70）
    * └─ Part B（仅当Part A总分为0时才执行）:
    *     a. 外链绑定在"下载"按钮上       → +10
-   *     b. 外链指向文件                 → +10
-   *        如果是压缩包格式               → 再+10
+   *     b. 外链指向压缩包格式文件       → +10
    */
   static _evaluateRule4(linkMetrics, domain) {
     const result = {
@@ -252,13 +298,10 @@ export class ScoringEngine {
       partBScore += SCORE_RULE_4B_DOWNLOAD_BTN;
       partBReasons.push(linkMetrics.externalWithDownloadText + '个外链在下载按钮上');
     }
-    if (linkMetrics.externalFileLinks >= 1) {
-      partBScore += SCORE_RULE_4B_FILE_LINK;
-      partBReasons.push(linkMetrics.externalFileLinks + '个外链指向文件');
-    }
+    // Part B-b：仅压缩包链接加分（普通文件链接不再单独计分）
     if (linkMetrics.externalArchiveLinks >= 1) {
       partBScore += SCORE_RULE_4B_ARCHIVE_LINK;
-      partBReasons.push(linkMetrics.externalArchiveLinks + '个是压缩包');
+      partBReasons.push(linkMetrics.externalArchiveLinks + '个外链指向压缩包');
     }
 
     if (partBScore > 0) {
@@ -274,15 +317,29 @@ export class ScoringEngine {
     return result;
   }
 
-  // ==================== 规则五：AI生成页面特征 (30分) ====================
+  // ==================== 规则五：代码工程化检测（最高30分） ====================
   /**
-   * 检测AI生成页面的典型代码特征：
-   * - HTML行数 < 300
-   * - 外部脚本数 < 5
-   * - 无主流框架痕迹
-   * - 但页面文本内容 > 500字符（内容看似丰富）
+   * 检测页面代码质量，基于三信号组合判定体系：
    *
-   * @param {Object} pageMetrics - 来自content script的页面度量
+   * 前提：页面文本内容 > 500 字符（排除空白/占位页面，避免误报）
+   *
+   * 三信号：
+   *   信号1 — DOM节点数 < 100       （页面结构过于简单，不受HTML格式化影响）
+   *   信号2 — 无主流框架痕迹         （HTML标记 + window全局变量双重检测）
+   *   信号3 — 外部资源去重总数 < 5    （脚本+样式+图片+字体+媒体，不含同源资源）
+   *
+   * 组合判定（信号数替代原OR逻辑，降低对正常简单页面的误报）：
+   *   3/3 信号全中 → +30 分（高度可疑：经典钓鱼空壳三特征齐备）
+   *   2/3 信号命中 → +20 分（中度可疑：两个维度异常）
+   *   0-1 信号     →   0 分（证据不足，不单独加分）
+   *
+   * 设计原则：
+   *   - 正常页面几乎不会三信号全中（即有外部资源、有框架、DOM复杂）
+   *   - 单信号在正常页面中常见（如简单博客无框架），不应处罚
+   *   - 钓鱼/AI生成页面通常同时满足多个信号，组合判定可精准识别
+   *
+   * @param {Object} pageMetrics - 来自 content script 的页面度量
+   * @param {string} domain - 页面域名（保留参数，供未来扩展）
    */
   static _evaluateRule5(pageMetrics, domain) {
     const result = {
@@ -297,45 +354,62 @@ export class ScoringEngine {
       return result;
     }
 
-    let flags = 0;
-    const reasons = [];
-
-    // 检查1: HTML行数过少
-    if (pageMetrics.htmlLines > 0 && pageMetrics.htmlLines < AI_PAGE_THRESHOLDS.MIN_HTML_LINES) {
-      flags++;
-      reasons.push(`HTML仅${pageMetrics.htmlLines}行`);
-    }
-
-    // 检查2: 外部脚本数过少
-    if (pageMetrics.externalScripts < AI_PAGE_THRESHOLDS.MIN_EXTERNAL_SCRIPTS) {
-      flags++;
-      reasons.push(`外部脚本仅${pageMetrics.externalScripts}个`);
-    }
-
-    // 检查3: 无主流框架痕迹
-    if (pageMetrics.hasFrameworkMarkers === false) {
-      flags++;
-      reasons.push('未检测到主流框架');
-    }
-
-    // 检查4: 文本内容丰富（排除真正的空白页）
+    // 前提检查：文本内容太少 → 跳过（避免空白页/占位页误报）
     if (pageMetrics.textLength < AI_PAGE_THRESHOLDS.MIN_TEXT_LENGTH) {
-      // 文本太少，不触发（避免空白页误报）
-      result.detail = '页面文本内容不足，跳过AI检测';
+      result.detail = '页面文本内容不足，跳过代码工程化检测';
       result.detailCN = '- 代码工程化: 内容不足';
       return result;
     }
 
-    // 判定：3个条件全部满足 → 高度可疑
-    if (flags >= 3) {
+    const domNodeCount = pageMetrics.domNodeCount || 0;
+    const hasExternal = !!(pageMetrics.hasExternalResources);
+    const totalExternal = pageMetrics.totalExternalResources || 0;
+    const hasFramework = !!(pageMetrics.hasFrameworkMarkers);
+
+    // 收集命中的信号（而非简单的 flags 计数）
+    const signals = [];
+
+    // 信号1：DOM节点数过少（页面结构复杂度不足）
+    // 使用 DOM 节点总数替代 HTML 行数，不受代码压缩/格式化影响
+    if (domNodeCount > 0 && domNodeCount < AI_PAGE_THRESHOLDS.MIN_DOM_NODES) {
+      signals.push(`DOM节点仅${domNodeCount}个`);
+    }
+
+    // 信号2：无主流框架痕迹
+    // content-script 已通过 HTML全文扫描 + window全局变量双重检测
+    if (!hasFramework) {
+      signals.push('未检测到主流框架');
+    }
+
+    // 信号3：外部资源过少
+    // 使用去重后的外部资源总数，合理反映页面是否依赖外部基础设施
+    if (!hasExternal || totalExternal < AI_PAGE_THRESHOLDS.MIN_EXTERNAL_RESOURCES) {
+      signals.push(`外部资源仅${totalExternal}个`);
+    }
+
+    const signalCount = signals.length;
+
+    // 组合判定
+    if (signalCount >= AI_PAGE_THRESHOLDS.RULE_5_SIGNALS_FULL) {
+      // 3/3 信号全中 → 高度可疑（经典钓鱼空壳：结构简单+无框架+无外部资源）
       result.score = SCORE_RULE_5;  // +30
       result.triggered = true;
-      result.detail = `AI生成页面特征: ${reasons.join('; ')}`;
-      result.detailCN = `✗ 代码工程化: AI生成特征 (${reasons.join(', ')})`;
-    } else if (flags >= 2) {
-      // 2个条件满足 → 中度可疑，不额外加分但记录
-      result.detail = `部分AI生成特征: ${reasons.join('; ')}`;
-      result.detailCN = `⚠ 代码工程化: 部分可疑 (${reasons.join(', ')})`;
+      result.detail = `代码工程质量差(${signalCount}/3信号): ${signals.join('; ')}`;
+      result.detailCN = `✗ 代码工程化: 高度可疑 (${signals.join(', ')})`;
+    } else if (signalCount >= AI_PAGE_THRESHOLDS.RULE_5_SIGNALS_PARTIAL) {
+      // 2/3 信号命中 → 中度可疑
+      result.score = SCORE_RULE_5_PARTIAL;  // +20
+      result.triggered = true;
+      result.detail = `代码工程化弱信号(${signalCount}/3信号): ${signals.join('; ')}`;
+      result.detailCN = `⚠ 代码工程化: 中度可疑 (${signals.join(', ')})`;
+    } else if (signalCount === 1) {
+      // 1/3 信号 → 证据不足，不扣分（正常简单页面常有单个弱特征）
+      result.detail = `代码工程化基本正常（仅${signals[0]}）`;
+      result.detailCN = '✓ 代码工程化: 基本正常';
+    } else {
+      // 0/3 信号 → 完全正常
+      result.detail = '代码工程化检测通过（DOM节点' + domNodeCount + '，外部资源' + totalExternal + '个）';
+      result.detailCN = '✓ 代码工程化: 正常';
     }
 
     return result;

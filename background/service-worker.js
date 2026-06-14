@@ -22,11 +22,25 @@
 import { ScoringEngine } from './scoring-engine.js';
 import { DomainDatabase } from './domain-database.js';
 import { CacheManager } from './cache-manager.js';
+import { registerNonChineseBrandDomains } from './icp-utils.js';
 import { UrlUtils } from '../utils/url-utils.js';
 import {
   SCORE_THRESHOLD, RISK_LEVEL, MSG_TYPES,
   STORAGE_KEYS, CACHE_TTL
 } from '../utils/constants.js';
+
+// ==================== 模块初始化 ====================
+
+// 将 domain-database 中所有非中国品牌的官方域名注册到 ICP 豁免白名单
+(function initIcpExemptList() {
+  const allEntries = DomainDatabase.getAllEntries();
+  for (const entry of allEntries) {
+    if (!entry.isChineseBrand && entry.officialDomains) {
+      registerNonChineseBrandDomains(entry.officialDomains);
+    }
+  }
+  console.log('[ServiceWorker] ICP豁免白名单已初始化');
+})();
 
 // ==================== 标签页状态管理 ====================
 
@@ -811,4 +825,4 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
-console.log('[ServiceWorker] ✅ 银狐木马检测扩展 v1.2.1 已就绪');
+console.log('[ServiceWorker] ✅ 银狐木马检测扩展 v1.2.2 已就绪');

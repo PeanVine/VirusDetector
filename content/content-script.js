@@ -5,7 +5,7 @@
  * 在 document_idle 阶段运行，分两次采集（600ms + 3500ms）以捕获懒加载内容。
  *
  * @module content-script
- * @version 1.2.1
+ * @version 1.2.2
  *
  * 职责：
  *   1. 采集链接分析数据 (collectLinkMetrics) — 规则四数据源
@@ -14,7 +14,7 @@
  *      - 重复链接追踪（>=4 个元素指向同一链接 → 规则 A-③）
  *      - 外链下载分析（下载按钮文本 + 文件扩展名）
  *   2. 采集页面度量 (collectPageMetrics) — 规则五数据源
- *      - HTML 行数、外部脚本数、框架标记、文本长度
+ *      - DOM节点数、外部资源去重总数、框架标记（HTML全文+window全局变量双重检测）、文本长度
  *   3. 扫描 ICP 备案号 (findIcpStrings) — 规则三数据源
  *      - 6 层递进扫描：footer → ICP 元素 → 底部 30% 区域 → <a> 链接 → fixed 元素 → TreeWalker
  *   4. 响应来自 Service Worker 的 REQUEST_PAGE_TEXT 重采请求
@@ -226,44 +226,145 @@
     const html = document.documentElement.outerHTML || '';
     const htmlLines = html.split('\n').length;
 
-    // 外部脚本计数
-    const scripts = document.querySelectorAll('script[src]');
-    const externalScripts = scripts.length;
-    const scriptSrcs = Array.from(scripts).map(s => s.getAttribute('src') || '');
+    // DOM复杂度：节点总数（替代HTML行数作为结构复杂度指标，不受代码压缩/格式化影响）
+    const domNodeCount = document.getElementsByTagName('*').length;
 
-    // 框架标记检测
-    const htmlLower = html.substring(0, 5000).toLowerCase(); // 前5000字符足够
-    const frameworkMarkers = [
+    // 外部资源总计数（云上/服务器资源：含外部脚本、外部样式、图片、字体、媒体等）
+    const currentHost = window.location.hostname;
+    function isExternal(url) {
+      if (!url) return false;
+      try {
+        var u = new URL(url, window.location.href);
+        return u.hostname && u.hostname !== currentHost;
+      } catch (e) { return false; }
+    }
+
+    // 统计各类外部资源（合并查询，避免重复 querySelectorAll）
+    var extRes = {
+      scripts: [],
+      styles: [],
+      images: [],
+      media: [],
+      fonts: []
+    };
+
+    // 外部脚本：带 src 属性的 <script>（不含内联脚本）
+    extRes.scripts = Array.from(document.querySelectorAll('script[src]'))
+      .map(function(s) { return s.getAttribute('src') || ''; })
+      .filter(isExternal);
+
+    // 外部样式：<link rel="stylesheet">
+    extRes.styles = Array.from(document.querySelectorAll('link[rel="stylesheet"]'))
+      .map(function(l) { return l.getAttribute('href') || ''; })
+      .filter(isExternal);
+
+    // 外部图片
+    extRes.images = Array.from(document.querySelectorAll('img[src]'))
+      .map(function(i) { return i.getAttribute('src') || ''; })
+      .filter(isExternal);
+
+    // 外部媒体：视频、音频、iframe 等
+    extRes.media = Array.from(document.querySelectorAll('video[src], audio[src], source[src], iframe[src]'))
+      .map(function(el) { return el.getAttribute('src') || ''; })
+      .filter(isExternal);
+
+    // 外部字体
+    extRes.fonts = Array.from(document.querySelectorAll('link[rel*="font"], link[as="font"]'))
+      .map(function(l) { return l.getAttribute('href') || ''; })
+      .filter(isExternal);
+
+    // 外部资源去重总数（同URL只计一次）
+    var allExternal = new Set();
+    Object.values(extRes).forEach(function(urls) {
+      urls.forEach(function(u) { allExternal.add(u); });
+    });
+
+    var totalExternalResources = allExternal.size;
+    var hasExternalResources = totalExternalResources > 0;
+
+    // 框架标记检测（增强版：HTML全文扫描 + window全局变量双重检测）
+    // 注：此列表需与 utils/constants.js 中 FRAMEWORK_HTML_MARKERS 保持同步
+    const FRAMEWORK_HTML_MARKERS = [
       'react', 'vue', 'angular', 'webpack', '__initial_state__',
       '_next/', 'nuxt', 'svelte', 'jquery', 'bootstrap',
-      'node_modules', '.jsx', '.tsx'
+      'node_modules', '.jsx', '.tsx', 'data-v-', 'ng-version',
+      '__vue__', '__react', 'redux', 'react-dom', 'vue-router',
+      'webpackjsonp', '__webpack_require__', '__nuxt', '__next'
     ];
-    const hasFrameworkMarkers = frameworkMarkers.some(m => htmlLower.includes(m));
+
+    // A. HTML 源码全文扫描（不再限制5000字符，搜索范围覆盖整个HTML文档）
+    const htmlLower = html.toLowerCase();
+    var htmlFrameworkHits = [];
+    for (var i = 0; i < FRAMEWORK_HTML_MARKERS.length; i++) {
+      if (htmlLower.indexOf(FRAMEWORK_HTML_MARKERS[i]) !== -1) {
+        htmlFrameworkHits.push(FRAMEWORK_HTML_MARKERS[i]);
+      }
+    }
+
+    // B. window 全局变量检测（捕获外部JS加载的框架，即使HTML源码中无痕迹）
+    var globalFrameworkHits = [];
+    try {
+      if (window.React || window.__REACT_DEVTOOLS_GLOBAL_HOOK__) globalFrameworkHits.push('react');
+      if (window.Vue || window.__VUE__) globalFrameworkHits.push('vue');
+      if (window.angular || document.querySelector('[ng-version]')) globalFrameworkHits.push('angular');
+      if (window.jQuery) globalFrameworkHits.push('jquery');
+      if (window.__NEXT_DATA__) globalFrameworkHits.push('next');
+      if (window.__NUXT__) globalFrameworkHits.push('nuxt');
+      if (window.__webpack_require__ || window.webpackJsonp) globalFrameworkHits.push('webpack');
+      if (window.__svelte || window.__svelte__) globalFrameworkHits.push('svelte');
+      if (window.bootstrap || (window.jQuery && window.jQuery.fn && window.jQuery.fn.modal)) globalFrameworkHits.push('bootstrap');
+      // Vue 的 DOM 痕迹（Vue 会在元素上添加 data-v-xxxxxxxx 属性）
+      if (document.querySelector('[data-v-]')) globalFrameworkHits.push('vue');
+    } catch (e) { /* 跨域iframe或安全策略可能抛出异常 */ }
+
+    // 合并并去重
+    var allFrameworkHits = [];
+    var frameworkSeen = new Set();
+    htmlFrameworkHits.concat(globalFrameworkHits).forEach(function(hit) {
+      if (!frameworkSeen.has(hit)) {
+        frameworkSeen.add(hit);
+        allFrameworkHits.push(hit);
+      }
+    });
+    var hasFrameworkMarkers = allFrameworkHits.length > 0;
 
     // 页面文本长度
     const bodyText = (document.body ? document.body.innerText : '') || '';
     const textLength = bodyText.length;
 
-    // Meta generator（AI生成页面的典型特征）
+    // Meta generator（AI生成页面的典型特征，保留供未来分析）
     const metaGenerator = document.querySelector('meta[name="generator"]');
     const generator = metaGenerator ? metaGenerator.getAttribute('content') : null;
 
-    // 内联样式数量（AI生成页面通常有大量内联样式）
+    // 内联样式数量
     const inlineStyles = document.querySelectorAll('[style]').length;
 
     // <head>中的<link>数量
     const headLinks = document.querySelectorAll('head link').length;
 
+    // 带src的脚本总数（含同源+外部，保留供参考）
+    const totalScriptsWithSrc = document.querySelectorAll('script[src]').length;
+
     return {
       htmlLines,
-      externalScripts,
-      scriptSrcs,
+      domNodeCount,
+      totalScriptsWithSrc,
       hasFrameworkMarkers,
+      frameworkHits: allFrameworkHits,
       textLength,
       generator,
       inlineStyles,
       headLinks,
-      url: window.location.href
+      url: window.location.href,
+      hasExternalResources: hasExternalResources,
+      totalExternalResources: totalExternalResources,
+      externalBreakdown: {
+        scripts: extRes.scripts.length,
+        styles: extRes.styles.length,
+        images: extRes.images.length,
+        media: extRes.media.length,
+        fonts: extRes.fonts.length
+      }
     };
   }
 
@@ -276,7 +377,7 @@
     function add(text) {
       const t = text.trim();
       if (t.length > 3 && t.length < 500 && !seen.has(t) &&
-          /ICP|icp|备案|beian|BeiAn|BEIAN|备|公安|公网安备|经营许可证|B2-|增值电信/.test(t)) {
+          /ICP|icp|备案|beian|BeiAn|BEIAN|公安|公网安备|经营许可证|B2-|增值电信/.test(t)) {
         icpStrings.push(t); seen.add(t);
       }
     }
@@ -320,11 +421,30 @@
       const href = (el.getAttribute('href') || '').toLowerCase();
       const text = (el.textContent || '').trim();
       if (text.length > 3 && text.length < 300 &&
-          /ICP|备案|beian|备|公安/.test(text + href)) {
+          /ICP|备案|beian|公安/.test(text + href)) {
         add(text);
       }
       if (href.includes('beian') || href.includes('icp') || href.includes('miit')) {
         add(text || href);
+      }
+
+      // 专项：beian.gov.cn / beian.miit.gov.cn 等政府备案查询链接
+      // 链接文本通常为完整备案号，如 "粤ICP备2024178421号"
+      if (/(beian\.gov\.cn|beian\.miit\.gov\.cn|miitbeian\.gov\.cn)/i.test(href)) {
+        // 优先取链接文本，其次取父元素文本，再取相邻文本
+        var linkText = (el.textContent || '').trim();
+        if (linkText.length > 5 && /[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤川青藏琼宁]/.test(linkText)) {
+          add(linkText);
+        }
+        // 同时检查父元素中的完整备案信息
+        var parentEl = el.parentElement;
+        if (parentEl) {
+          var parentText = (parentEl.textContent || '').trim();
+          if (parentText.length > 5 && parentText.length < 500 &&
+              /[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤川青藏琼宁]/.test(parentText)) {
+            add(parentText);
+          }
+        }
       }
     });
 
@@ -353,7 +473,7 @@
       while ((node = walker.nextNode())) {
         const t = node.textContent.trim();
         if (t.length > 5 && t.length < 300 &&
-            (t.includes('ICP') || t.includes('备') || t.includes('icp') ||
+            (t.includes('ICP') || t.includes('icp') || t.includes('备案') ||
              t.includes('beian') || t.includes('公安') || t.includes('B2-') ||
              t.includes('经营许可证') || t.includes('增值电信'))) {
           add(t);
@@ -370,6 +490,9 @@
     try { return fn(); } catch (e) { console.error('[VirusDetector] 采集失败:', e); return fallback; }
   }
 
+  // 首次扫描结果缓存，用于二次扫描去重
+  var _firstScanData = null;
+
   async function sendAnalysisResult() {
     // 每个采集函数独立 try-catch，一个失败不影响其他
     var pageMetrics = safeCollect(collectPageMetrics, null);
@@ -382,13 +505,35 @@
       console.error('[VirusDetector] 链接分析采集失败:', e);
     }
 
+    var payload = {
+      url: window.location.href, domain: window.location.hostname, title: document.title,
+      pageText: safeCollect(function() { return (document.body ? document.body.innerText : '').substring(0, 15000); }, ''),
+      icpStrings: icpStrings, pageMetrics: pageMetrics, linkMetrics: linkMetrics
+    };
+
+    // 二次扫描去重：与首次结果比对，无新增数据则跳过发送
+    if (_firstScanData) {
+      var firstIcpCount = (_firstScanData.icpStrings || []).length;
+      var firstLinkCount = _firstScanData.linkMetrics ? _firstScanData.linkMetrics.totalLinks : 0;
+      var newIcpCount = (icpStrings || []).length;
+      var newLinkCount = linkMetrics ? linkMetrics.totalLinks : 0;
+      var firstExternalCount = _firstScanData.linkMetrics ? _firstScanData.linkMetrics.externalDownloadLinks.length : 0;
+      var newExternalCount = linkMetrics ? linkMetrics.externalDownloadLinks.length : 0;
+
+      // ICP 备案号无新增 且 链接/外链数量无增长 → 跳过二次发送
+      if (newIcpCount <= firstIcpCount && newLinkCount <= firstLinkCount && newExternalCount <= firstExternalCount) {
+        console.log('[VirusDetector] 二次扫描无新增数据，跳过重复发送');
+        return;
+      }
+      console.log('[VirusDetector] 二次扫描检测到新数据 (ICP:' + firstIcpCount + '→' + newIcpCount +
+        ', 链接:' + firstLinkCount + '→' + newLinkCount + ', 外链:' + firstExternalCount + '→' + newExternalCount + ')');
+    } else {
+      _firstScanData = { icpStrings: icpStrings, linkMetrics: linkMetrics };
+    }
+
     chrome.runtime.sendMessage({
       type: 'PAGE_ANALYSIS_RESULT',
-      payload: {
-        url: window.location.href, domain: window.location.hostname, title: document.title,
-        pageText: safeCollect(function() { return (document.body ? document.body.innerText : '').substring(0, 3000); }, ''),
-        icpStrings: icpStrings, pageMetrics: pageMetrics, linkMetrics: linkMetrics
-      },
+      payload: payload,
       timestamp: Date.now()
     }).catch(function() {});
   }
@@ -410,7 +555,7 @@
             pageMetrics: safeCollect(collectPageMetrics, null),
             linkMetrics: linkMetrics,
             icpStrings: safeCollect(findIcpStrings, []),
-            pageText: (document.body ? document.body.innerText : '').substring(0, 3000),
+            pageText: (document.body ? document.body.innerText : '').substring(0, 15000),
             title: document.title,
             url: window.location.href
           });

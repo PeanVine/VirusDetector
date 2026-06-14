@@ -20,11 +20,12 @@
  *   - keywords         搜索关键词（用于段级匹配）
  *   - isChineseBrand   是否为中国品牌（用于部分检测逻辑）
  *
- * 仿冒检测策略（4 层递进）：
- *   1. 子串包含   → 仿冒域名包含官方域名字符串
- *   2. 段级关键词 → 按 '.' 和 '-' 拆分域名，逐段匹配品牌关键词
- *   3. 可疑 TLD   → 关键词命中 + 域名使用非常见顶级域
- *   4. 编辑距离   → Levenshtein 距离 1-2 的相似域名
+ * 仿冒检测策略（5 层递进）：
+ *   1. 子串包含     → 仿冒域名包含官方域名字符串
+ *   2. 段级关键词   → 按 '.' 和 '-' 拆分域名，逐段匹配品牌关键词
+ *   3. 可疑 TLD     → 关键词命中 + 域名使用非常见顶级域
+ *   3.5 关键词堆叠  → 同一品牌关键词在域名段中重复 >= 3 次（如 google-google-cn-google）
+ *   4. 编辑距离     → Levenshtein 距离 1-2 的相似域名
  */
 export const SOFTWARE_CATEGORIES = {
   SECURITY: '安全软件',
@@ -158,11 +159,19 @@ const DOMAIN_DATABASE = [
     isChineseBrand: false
   },
   {
+    name: '谷歌搜索',
+    officialDomains: ['google.com', 'google.cn', 'google.com.hk'],
+    correctUrl: 'https://www.google.com/',
+    category: SOFTWARE_CATEGORIES.BROWSER,
+    keywords: ['google', 'Google', '谷歌', 'guge'],
+    isChineseBrand: false
+  },
+  {
     name: '谷歌浏览器',
     officialDomains: ['google.com', 'google.cn', 'chrome.google.com'],
     correctUrl: 'https://www.google.com/chrome/',
     category: SOFTWARE_CATEGORIES.BROWSER,
-    keywords: ['Chrome', 'Google Chrome', '谷歌浏览器', 'chrome'],
+    keywords: ['Chrome', 'Google Chrome', '谷歌浏览器', 'chrome', 'google', 'Google'],
     isChineseBrand: false
   },
   {
@@ -1189,6 +1198,39 @@ export class DomainDatabase {
                 matchedBy: `keyword "${keyword}" in ${normalized} with suspicious TLD`
               };
             }
+          }
+        }
+      }
+    }
+
+    // 策略3.5：品牌关键词重复（keyword stuffing）检测
+    // 攻击者常在子域名中堆叠品牌词，如 google-google-cn-google.hl.cn
+    // 同一品牌关键词在域名段中出现 >=3 次 → 明确钓鱼信号
+    for (const entry of DOMAIN_DATABASE) {
+      for (const keyword of entry.keywords) {
+        const kw = keyword.toLowerCase();
+        if (kw.length < 4) continue;
+        // 统计关键词在域名段中出现的次数
+        let hitCount = 0;
+        for (const seg of segments) {
+          if (seg === kw || (seg.includes(kw) && kw.length / seg.length >= 0.6)) {
+            hitCount++;
+          }
+        }
+        if (hitCount >= 3) {
+          // 排除官方域名
+          const isOfficial = entry.officialDomains.some(d => {
+            const dn = d.replace(/^www\./i, '').toLowerCase();
+            return normalized === dn || normalized.endsWith('.' + dn);
+          });
+          if (!isOfficial) {
+            return {
+              entry,
+              officialDomain: entry.officialDomains[0],
+              correctUrl: entry.correctUrl,
+              matchType: 'keyword_stuffing',
+              matchedBy: `keyword "${keyword}" repeated ${hitCount} times in "${normalized}"`
+            };
           }
         }
       }

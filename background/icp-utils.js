@@ -1,7 +1,190 @@
 /**
  * ICP备案号检测工具
- * 支持所有中国省份简称的正则匹配和模糊查找
+ * 支持所有中国省份简称的正则匹配、CJK内容检测、外国站点豁免
  */
+
+// ==================== 外国网站ICP豁免白名单 ====================
+// 这些是全球知名非中国站点，确定不需要ICP备案
+// 按分类组织，覆盖主流全球网站、软件、平台
+const ICP_EXEMPT_DOMAINS = new Set([
+  // —— 全球科技巨头 ——
+  'google.com', 'google.com.hk', 'google.co.jp', 'google.co.uk',
+  'youtube.com', 'youtu.be', 'yt.be',
+  'microsoft.com', 'live.com', 'outlook.com', 'office.com',
+  'apple.com', 'icloud.com', 'mac.com',
+  'amazon.com', 'amazon.co.jp', 'amazon.co.uk', 'amazon.de',
+  'meta.com', 'facebook.com', 'instagram.com', 'whatsapp.com',
+  'threads.net',
+
+  // —— 社交媒体 / 论坛 ——
+  'twitter.com', 'x.com', 't.co',
+  'reddit.com', 'redd.it',
+  'discord.com', 'discord.gg',
+  'telegram.org', 't.me',
+  'signal.org',
+  'linkedin.com',
+  'pinterest.com',
+  'tumblr.com',
+  'snapchat.com',
+  'tiktok.com',
+  'quora.com',
+  'medium.com',
+
+  // —— 开发者平台 ——
+  'github.com', 'github.io',
+  'gitlab.com',
+  'bitbucket.org',
+  'stackoverflow.com', 'stackexchange.com', 'serverfault.com',
+  'superuser.com', 'askubuntu.com',
+  'npmjs.com', 'npmjs.org',
+  'pypi.org', 'python.org',
+  'rubygems.org',
+  'crates.io',
+  'docker.com', 'docker.io',
+  'kubernetes.io',
+  'sourceforge.net',
+  'codepen.io',
+  'jsfiddle.net',
+  'codesandbox.io',
+  'replit.com',
+  'vercel.com', 'vercel.app',
+  'netlify.com', 'netlify.app',
+  'heroku.com', 'herokuapp.com',
+  'cloudflare.com', 'cloudflarepages.dev',
+  'firebase.google.com', 'firebaseapp.com',
+
+  // —— 百科 / 知识 ——
+  'wikipedia.org', 'wikimedia.org', 'wikiwand.com',
+  'mozilla.org', 'developer.mozilla.org',
+  'w3.org', 'w3schools.com',
+
+  // —— 非中国软件 / 工具 ——
+  'firefox.com',
+  'rarlab.com', 'win-rar.com',
+  '7-zip.org',
+  'bandisoft.com', 'bandizip.com',
+  'cpuid.com',
+  'teamviewer.com', 'teamviewer.cn',
+  'anydesk.com', 'anydesk.cn',
+  'internetdownloadmanager.com',
+  'bitcomet.com',
+  'v2ex.com',
+
+  // —— 视频 / 流媒体 ——
+  'netflix.com',
+  'spotify.com',
+  'twitch.tv',
+  'vimeo.com',
+  'dailymotion.com',
+  'disneyplus.com',
+  'hbomax.com',
+  'hulu.com',
+  'primevideo.com',
+
+  // —— 电商（非中国）——
+  'ebay.com', 'ebay.co.uk',
+  'etsy.com',
+  'shopify.com', 'myshopify.com',
+
+  // —— 游戏平台 ——
+  'steampowered.com', 'steamcommunity.com', 'steam.com',
+  'epicgames.com',
+  'minecraft.net',
+  'ea.com', 'origin.com',
+  'ubisoft.com', 'ubisoftconnect.com',
+  'roblox.com',
+  'gog.com',
+  'humblebundle.com',
+  'itch.io',
+  'nintendo.com',
+  'playstation.com',
+  'xbox.com',
+
+  // —— 云服务 / SaaS ——
+  'dropbox.com', 'dropboxusercontent.com',
+  'box.com',
+  'notion.so', 'notion.com',
+  'slack.com',
+  'zoom.us', 'zoom.com',
+  'atlassian.com', 'jira.com', 'confluence.com', 'trello.com',
+  'figma.com',
+  'canva.com',
+  'miro.com',
+  'linear.app',
+  'airtable.com',
+  'typeform.com',
+  'surveymonkey.com',
+  'mailchimp.com',
+  'sendgrid.net',
+  'twilio.com',
+  'stripe.com',
+
+  // —— AI / 研究 ——
+  'openai.com', 'chatgpt.com',
+  'anthropic.com', 'claude.ai',
+  'huggingface.co',
+  'kaggle.com',
+  'arxiv.org',
+  'deepmind.google.com',
+
+  // —— 操作系统 / 发行版 ——
+  'ubuntu.com',
+  'debian.org',
+  'archlinux.org',
+  'fedora.org', 'fedoraproject.org',
+  'centos.org',
+  'kali.org',
+  'linux.org',
+  'freebsd.org',
+  'gnu.org',
+  'apache.org',
+
+  // —— 其他常见全球站点 ——
+  'archive.org',
+  'change.org',
+  'kickstarter.com',
+  'patreon.com',
+  'paypal.com',
+  'wix.com',
+  'wordpress.com', 'wordpress.org',
+  'blogger.com', 'blogspot.com',
+  'weebly.com',
+  'godaddy.com',
+  'namecheap.com',
+  'duckduckgo.com',
+  'proton.me', 'protonmail.com',
+  'mega.nz', 'mega.io',
+  'mediafire.com',
+]);
+
+/**
+ * 从 domain-database 中动态提取非中国品牌的官方域名并加入豁免集合
+ * 调用时机：domain-database 加载完成后
+ * @param {string[]} domains - 非中国品牌的官方域名列表
+ */
+export function registerNonChineseBrandDomains(domains) {
+  for (const d of domains) {
+    ICP_EXEMPT_DOMAINS.add(d.replace(/^www\./i, '').toLowerCase());
+  }
+}
+
+// ==================== CJK 字符检测 ====================
+
+/**
+ * CJK 统一表意文字 Unicode 范围
+ * - U+4E00–U+9FFF   CJK 统一表意文字（常用汉字）
+ * - U+3400–U+4DBF   CJK 扩展 A
+ * - U+F900–U+FAFF   CJK 兼容表意文字
+ */
+const CJK_RANGES = [
+  [0x4E00, 0x9FFF],
+  [0x3400, 0x4DBF],
+  [0xF900, 0xFAFF]
+];
+
+function isCJKChar(codePoint) {
+  return CJK_RANGES.some(([lo, hi]) => codePoint >= lo && codePoint <= hi);
+}
 
 // 中国所有省份/自治区/直辖市简称
 const PROVINCE_ABBREVIATIONS = [
@@ -47,21 +230,22 @@ const PROVINCE_PATTERN = PROVINCE_ABBREVIATIONS.join('|');
 export class IcpUtils {
   /**
    * 完整的ICP备案号正则
-   * 格式: 省份简称 + ICP备 + 6-8位数字 + 号(-附属编号可选)
+   * 格式: 省份简称 + ICP备/证 + 6-12位数字 + 号(-附属编号可选)
    * 同时匹配ICP证（经营性）
+   * 注：\d{6,12} 兼容旧6位、新8位及近年出现的9-10位备案号
    */
   static ICP_FULL_REGEX = new RegExp(
-    `(${PROVINCE_PATTERN})ICP[备证]\\d{6,8}号(-\\d+)?`,
-    'g'
+    `(${PROVINCE_PATTERN})ICP[备证]\\d{6,12}号(-\\d+)?`,
+    'gi'
   );
 
   /**
    * 简化匹配：省份简称 + ICP备/证 + 数字
-   * 用于宽松匹配（允许缺失"号"字）
+   * 用于宽松匹配（允许缺失"号"字、大小写如 icp/ICP/Icp 均兼容）
    */
   static ICP_SIMPLE_REGEX = new RegExp(
-    `(${PROVINCE_PATTERN})ICP[备证]\\d{6,8}`,
-    'g'
+    `(${PROVINCE_PATTERN})ICP[备证]\\d{6,12}`,
+    'gi'
   );
 
   /**
@@ -212,5 +396,69 @@ export class IcpUtils {
     }
 
     return { candidates, hasIcpKeyword };
+  }
+
+  // ==================== CJK 内容检测 & ICP 豁免判定 ====================
+
+  /**
+   * 检测页面文本中是否包含显著的中文（CJK）内容。
+   *
+   * 双重阈值：
+   *   - CJK 字符绝对数量 >= 30 且占比 >= 8%
+   *   - 或 CJK 字符 >= 500（长中文页面，即使占比低也算）
+   *
+   * 使用 pageText（前 15000 字符）即可有效判定，
+   * 因为中文网站的前几千字符几乎必然包含大量汉字。
+   *
+   * @param {string} text - 页面文本
+   * @returns {{ hasCJK: boolean, cjkCount: number, cjkRatio: number }}
+   */
+  static detectCJKContent(text) {
+    if (!text || text.length === 0) {
+      return { hasCJK: false, cjkCount: 0, cjkRatio: 0 };
+    }
+
+    const totalChars = text.length;
+    let cjkCount = 0;
+
+    for (let i = 0; i < totalChars; i++) {
+      if (isCJKChar(text.codePointAt(i))) {
+        cjkCount++;
+        // 跳过代理对（emoji等），但CJK基本在多语言平面内，不会触发代理对
+        // 安全起见处理一下
+        if (text.codePointAt(i) > 0xFFFF) i++;
+      }
+    }
+
+    const cjkRatio = cjkCount / totalChars;
+    const hasCJK = (cjkCount >= 30 && cjkRatio >= 0.08) || cjkCount >= 500;
+
+    return { hasCJK, cjkCount, cjkRatio };
+  }
+
+  /**
+   * 判断域名是否在 ICP 豁免白名单中。
+   * 白名单包含约 150 个全球知名非中国域名，
+   * 这些站点确定不需要中国 ICP 备案。
+   *
+   * @param {string} domain - 主机名（如 "www.google.com" 或 "google.com"）
+   * @returns {boolean}
+   */
+  static isIcpExempt(domain) {
+    if (!domain) return false;
+    const normalized = domain.replace(/^www\./i, '').toLowerCase();
+
+    // 精确匹配
+    if (ICP_EXEMPT_DOMAINS.has(normalized)) return true;
+
+    // 后缀匹配：子域名也享受豁免
+    // 例如 calendar.google.com → 匹配 google.com
+    const parts = normalized.split('.');
+    for (let i = 1; i < parts.length; i++) {
+      const parent = parts.slice(i).join('.');
+      if (ICP_EXEMPT_DOMAINS.has(parent)) return true;
+    }
+
+    return false;
   }
 }
