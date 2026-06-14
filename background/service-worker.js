@@ -4,7 +4,7 @@
  * 是整个扩展的中央调度模块，负责协调所有后台任务：
  *
  * @module service-worker
- * @version 1.2.1
+ * @version 1.3.0
  *
  * 核心职责：
  *   1. 页面导航监听 → 白名单检查 → 缓存查询 → 触发评分分析
@@ -825,4 +825,4 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   }
 });
 
-console.log('[ServiceWorker] ✅ 银狐木马检测扩展 v1.2.2 已就绪');
+console.log('[ServiceWorker] ✅ 银狐木马检测扩展 v1.3.0 已就绪');

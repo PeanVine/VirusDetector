@@ -5,7 +5,7 @@
  * 在 document_idle 阶段运行，分两次采集（600ms + 3500ms）以捕获懒加载内容。
  *
  * @module content-script
- * @version 1.2.2
+ * @version 1.3.0
  *
  * 职责：
  *   1. 采集链接分析数据 (collectLinkMetrics) — 规则四数据源
