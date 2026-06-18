@@ -5,7 +5,7 @@
  * 提供带内存缓存和速率限制的异步查询接口，供评分引擎和服务工作线程使用。
  *
  * @module whois-client
- * @version 2.2.1
+ * @version 2.2.2
  *
  * API 规范：
  *   - 接口地址：GET http://api.whoiscx.com/whois/?domain={domain}

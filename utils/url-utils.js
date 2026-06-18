@@ -4,7 +4,7 @@
  * 提供域名提取、主域解析（基于 publicsuffix.zone DNS PSL）、HTTPS 检测等 URL 处理能力。
  *
  * @module url-utils
- * @version 2.2.1
+ * @version 2.2.2
  *
  * PSL 查询策略：
  *   - 通过 DNS-over-HTTPS 查询 publicsuffix.zone 获取域名的公共后缀
@@ -22,6 +22,7 @@ const _pslCache = new Map();
  * 当 DNS 查询不可用时使用，覆盖最基础的 .com / .cn / .org 等。
  */
 const _FALLBACK_TLD = new Set([
+  // 单级 TLD
   'com', 'org', 'net', 'edu', 'gov', 'mil', 'int',
   'info', 'biz', 'name', 'pro', 'mobi', 'tel', 'asia',
   'xxx', 'shop', 'online', 'site', 'app', 'dev', 'blog', 'tech',
@@ -32,6 +33,20 @@ const _FALLBACK_TLD = new Set([
   'sg', 'in', 'au', 'nz', 'de', 'fr', 'it', 'es', 'nl', 'be',
   'ch', 'at', 'se', 'no', 'dk', 'fi', 'ie', 'pt', 'ru', 'br',
   'mx', 'ca', 'us', 'th', 'vn', 'ph', 'my', 'id', 'pk', 'bd',
+  // 常见多级公共后缀（DNS 不可用时的回退，覆盖最常用的场景）
+  'com.cn', 'net.cn', 'org.cn', 'gov.cn', 'edu.cn', 'ac.cn',
+  'co.uk', 'org.uk', 'ac.uk', 'gov.uk', 'me.uk', 'net.uk',
+  'co.jp', 'or.jp', 'ne.jp', 'ac.jp', 'go.jp',
+  'co.kr', 'or.kr', 'ne.kr', 'go.kr',
+  'com.hk', 'org.hk', 'net.hk', 'edu.hk', 'gov.hk',
+  'com.tw', 'org.tw', 'net.tw', 'gov.tw', 'edu.tw',
+  'com.au', 'net.au', 'org.au', 'edu.au', 'gov.au',
+  'co.nz', 'net.nz', 'org.nz',
+  'co.in', 'net.in', 'org.in', 'gov.in', 'ac.in',
+  'com.sg', 'net.sg', 'org.sg', 'edu.sg', 'gov.sg',
+  'com.br', 'net.br', 'org.br', 'gov.br',
+  'com.mx', 'net.mx', 'org.mx', 'gob.mx',
+  'co.za', 'web.za', 'org.za', 'net.za', 'gov.za',
 ]);
 
 /**
@@ -41,20 +56,24 @@ const _FALLBACK_TLD = new Set([
  * @returns {string} 公共后缀
  */
 function getPublicSuffix(hostname) {
-  // 1. DNS 缓存命中
+  // 1. DNS 缓存命中（由 refreshPublicSuffixDNS 异步填充）
   const cached = _pslCache.get(hostname);
   if (cached) return cached;
 
-  // 2. 回退 TLD 匹配（从右向左最长匹配）
+  // 2. 回退匹配：从最右段开始逐级向左扩展，找到 PSL 中最长的连续匹配
+  //    例如 xxx.com.cn: cn✓ → com.cn✗(不在回退集) → 返回 cn
+  //    若回退集包含 com.cn 则: cn✓ → com.cn✓ → xxx.com.cn✗ → 返回 com.cn
   const parts = hostname.split('.');
-  for (let len = Math.min(parts.length, 3); len >= 1; len--) {
+  let publicSuffix = parts[parts.length - 1] || ''; // 起始至少匹配 TLD
+  for (let len = 2; len <= parts.length; len++) {
     const candidate = parts.slice(-len).join('.');
     if (_FALLBACK_TLD.has(candidate)) {
-      return candidate;
+      publicSuffix = candidate; // 扩展为更长匹配
+    } else {
+      break; // 不再存在于 PSL，停止扩展
     }
   }
-  // 3. 兜底返回末段
-  return parts[parts.length - 1] || '';
+  return publicSuffix;
 }
 
 /**

@@ -6,7 +6,7 @@
  * 与白名单进行 O(1) 查找比对。
  *
  * @module trusted-platforms
- * @version 2.2.1
+ * @version 2.2.2
  *
  * 设计原则：
  *   - 白名单为可配置、可扩展的 Set，新增/移除平台只需修改数组
