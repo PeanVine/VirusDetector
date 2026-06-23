@@ -148,7 +148,27 @@ export class WhoisClient {
       return null;
     }
 
-    // 6. 处理 RDAP 404（域名在注册局 RDAP 中未找到）
+    // 6. 处理「该 TLD 无公开 RDAP 服务」（如 .cn）→ 优雅降级，缓存避免重复查询
+    if (rdapResult._rdap?.unsupported) {
+      const suffix = normalizedDomain.split('.').slice(1).join('.');
+      const tld = normalizedDomain.split('.').pop();
+      const result = {
+        domain: normalizedDomain, domainSuffix: suffix,
+        creationDays: -1, validDays: -1,
+        creationTime: '', expirationTime: '',
+        isExpire: false, registrarName: '',
+        domainStatus: [], nameServer: [],
+        queryTime: rdapResult.queryTime || new Date().toISOString(),
+        _unsupported: true
+      };
+      // 缓存哨兵结果，避免同一会话内对该 TLD 域名反复发起查询
+      _cache.set(normalizedDomain, { result, timestamp: Date.now() });
+      _lastError = null;
+      console.log(`[WhoisClient] 跳过查询（.${tld} 无公开 RDAP 服务）: ${normalizedDomain}`);
+      return result;
+    }
+
+    // 7. 处理 RDAP 404（域名在注册局 RDAP 中未找到）
     if (rdapResult._rdap?.notFound) {
       // 不缓存 404 结果（域名今后可能被注册）
       console.warn(`[WhoisClient] 域名在 RDAP 中未找到（可能未注册）: ${normalizedDomain}`);
@@ -156,7 +176,7 @@ export class WhoisClient {
       return null;
     }
 
-    // 7. 映射 RDAP 结果 → WhoisResult 格式
+    // 8. 映射 RDAP 结果 → WhoisResult 格式
     const result = {
       domain: rdapResult.domain || normalizedDomain,
       domainSuffix: rdapResult.domainSuffix || '',
@@ -171,7 +191,7 @@ export class WhoisClient {
       queryTime: rdapResult.queryTime || ''
     };
 
-    // 8. 写入缓存（仅当 creationDays 有效时缓存）
+    // 9. 写入缓存（仅当 creationDays 有效时缓存）
     if (result.creationDays > 0) {
       _cache.set(normalizedDomain, { result, timestamp: Date.now() });
       console.log(`[WhoisClient] 缓存写入: ${normalizedDomain} (creationDays=${result.creationDays})`);

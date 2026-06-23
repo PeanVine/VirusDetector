@@ -49,49 +49,41 @@ const RDAP_REQUEST_TIMEOUT = 10000;
 let _bootstrapCache = null;
 
 /**
- * 硬编码的常用 TLD → RDAP 服务器回退映射。
- * 当 IANA 引导文件无法下载时使用，覆盖最常用的顶级域。
- * 注意：回退映射可能不是最新版本，仅用作降级方案。
+ * 硬编码的常用 gTLD → RDAP 服务器回退映射。
+ *
+ * 仅在 IANA 引导文件【下载失败】时使用，作为常用顶级域的应急兜底。
+ * 正常情况下 IANA 引导文件覆盖全部 1200+ TLD，本表不会被用到。
+ *
+ * 重要：本表只包含【已从 IANA 引导文件验证过】的 gTLD 服务器地址。
+ *   - 不含 ccTLD（如 .cn/.uk/.de）：多数 ccTLD 已在 IANA 引导文件中，
+ *     且部分 ccTLD（如 .cn）根本没有公开 RDAP 服务，硬编码会导致无效请求。
+ *   - 仅 gTLD 在 ICANN 合约下强制提供公开 RDAP，地址稳定可靠。
  */
 const _FALLBACK_RDAP_SERVERS = new Map([
-  ['com', 'https://rdap.verisign.com/com/v1/'],
-  ['net', 'https://rdap.verisign.com/net/v1/'],
-  ['org', 'https://rdap.publicinterestregistry.org/'],
-  ['cn',  'https://rdap.cnnic.net.cn/'],
-  ['uk',  'https://rdap.nominet.uk/uk/'],
-  ['de',  'https://rdap.denic.de/'],
-  ['jp',  'https://rdap.nic.ad.jp/jp/'],
-  ['fr',  'https://rdap.nic.fr/'],
-  ['au',  'https://rdap.auda.org.au/'],
-  ['ru',  'https://rdap.nic.ru/'],
-  ['eu',  'https://rdap.eu/'],
-  ['it',  'https://rdap.nic.it/'],
-  ['nl',  'https://rdap.sidn.nl/'],
-  ['br',  'https://rdap.nic.br/'],
-  ['info','https://rdap.afilias.net/rdap/'],
-  ['biz', 'https://rdap.afilias.net/rdap/'],
-  ['io',  'https://rdap.afilias.net/rdap/'],
-  ['co',  'https://rdap.nic.co/'],
-  ['ai',  'https://rdap.nic.ai/'],
-  ['tv',  'https://rdap.nic.tv/'],
-  ['me',  'https://rdap.nic.me/'],
-  ['xyz', 'https://rdap.nic.xyz/'],
-  ['top', 'https://rdap.nic.top/'],
-  ['site','https://rdap.nic.site/'],
-  ['app', 'https://rdap.nic.app/'],
-  ['dev', 'https://rdap.nic.dev/'],
-  ['blog','https://rdap.nic.blog/'],
-  ['shop','https://rdap.nic.shop/'],
-  ['cc',  'https://rdap.nic.cc/'],
-  ['ws',  'https://rdap.nic.ws/'],
-  ['hk',  'https://rdap.hkirc.hk/'],
-  ['tw',  'https://rdap.twnic.tw/'],
-  ['kr',  'https://rdap.kisa.or.kr/'],
-  ['sg',  'https://rdap.sgnic.sg/'],
-  ['in',  'https://rdap.registry.in/'],
-  ['nz',  'https://rdap.srs.net.nz/'],
-  ['za',  'https://rdap.registry.net.za/'],
-  ['mx',  'https://rdap.nic.mx/'],
+  ['com',  'https://rdap.verisign.com/com/v1/'],
+  ['net',  'https://rdap.verisign.com/net/v1/'],
+  ['org',  'https://rdap.publicinterestregistry.org/rdap/'],
+  ['info', 'https://rdap.identitydigital.services/rdap/'],
+  ['ai',   'https://rdap.identitydigital.services/rdap/'],
+  ['biz',  'https://rdap.nic.biz/'],
+  ['tv',   'https://rdap.nic.tv/'],
+  ['cc',   'https://tld-rdap.verisign.com/cc/v1/'],
+  ['xyz',  'https://rdap.centralnic.com/xyz/'],
+  ['top',  'https://rdap.zdnsgtld.com/top/'],
+  ['app',  'https://pubapi.registry.google/rdap/'],
+  ['dev',  'https://pubapi.registry.google/rdap/'],
+]);
+
+/**
+ * 已知【没有公开 RDAP 服务】的 ccTLD 集合。
+ * 这些顶级域不在 IANA RDAP 引导文件中，且注册局未提供可访问的公开 RDAP 端点。
+ * 命中时直接跳过查询，避免无效网络请求和错误刷屏。
+ *
+ * 注意：该列表用于优化体验（少打日志），不影响功能正确性——
+ *   即使某 ccTLD 未列入此处，查询失败也会被优雅降级处理。
+ */
+const _NO_RDAP_TLDS = new Set([
+  'cn',  // CNNIC 未提供公开 RDAP（不在 IANA 引导文件中）
 ]);
 
 // ==================== 引导文件管理 ====================
@@ -218,20 +210,25 @@ function _clearBootstrapCache() {
 /**
  * 从引导文件中查找域名对应的 RDAP 基础 URL
  * @param {string} domain - 完整域名（如 "baidu.com"）
- * @returns {Promise<{baseUrl: string|null, isFallback: boolean}>}
- *   baseUrl: RDAP 基础 URL，未找到返回 null
+ * @returns {Promise<{baseUrl: string|null, isFallback: boolean, noRdap: boolean}>}
+ *   baseUrl:    RDAP 基础 URL，未找到返回 null
  *   isFallback: 是否正在使用回退映射
+ *   noRdap:     该 TLD 已知没有公开 RDAP 服务（直接跳过查询）
  */
 async function _getRdapBaseUrl(domain) {
-  const bootstrap = await _ensureBootstrap();
-
   // 提取 TLD（域名的最后一段）
   const parts = domain.toLowerCase().split('.');
-  if (parts.length < 2) return { baseUrl: null, isFallback: false };
+  if (parts.length < 2) return { baseUrl: null, isFallback: false, noRdap: false };
   const tld = parts[parts.length - 1];
 
+  // 已知无公开 RDAP 的 TLD → 直接跳过，不触发网络请求
+  if (_NO_RDAP_TLDS.has(tld)) {
+    return { baseUrl: null, isFallback: false, noRdap: true };
+  }
+
+  const bootstrap = await _ensureBootstrap();
   const baseUrl = bootstrap.tldToServer.get(tld) || null;
-  return { baseUrl, isFallback: bootstrap.isFallback || false };
+  return { baseUrl, isFallback: bootstrap.isFallback || false, noRdap: false };
 }
 
 // ==================== RDAP 响应解析 ====================
@@ -444,7 +441,28 @@ export class RdapClient {
     const normalizedDomain = domain.toLowerCase().trim();
 
     // Step 1: 获取引导文件，查找 RDAP 服务器 URL
-    const { baseUrl, isFallback } = await _getRdapBaseUrl(normalizedDomain);
+    const { baseUrl, isFallback, noRdap } = await _getRdapBaseUrl(normalizedDomain);
+
+    // 该 TLD 已知没有公开 RDAP 服务（如 .cn）→ 返回「不支持」哨兵结果，优雅降级
+    if (noRdap) {
+      _lastError = {
+        domain: normalizedDomain,
+        phase: 'unsupported',
+        message: `该 TLD 没有公开 RDAP 服务，跳过查询`
+      };
+      console.log(`[RdapClient] 跳过查询（无公开 RDAP）: ${normalizedDomain} (TLD: ${normalizedDomain.split('.').pop()})`);
+      return {
+        domain: normalizedDomain,
+        domainSuffix: normalizedDomain.split('.').slice(1).join('.'),
+        creationDays: -1, validDays: -1,
+        creationTime: '', expirationTime: '',
+        isExpire: false, registrarName: '',
+        domainStatus: [], nameServer: [],
+        queryTime: new Date().toISOString(),
+        _rdap: { unsupported: true }
+      };
+    }
+
     if (!baseUrl) {
       _lastError = {
         domain: normalizedDomain,
