@@ -502,7 +502,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: '通义千问',
-    officialDomains: ['tongyi.aliyun.com', 'qianwen.aliyun.com'],
+    officialDomains: ['tongyi.aliyun.com', 'qianwen.aliyun.com', 'qianwen.com'],
     correctUrl: 'https://tongyi.aliyun.com',
     category: SOFTWARE_CATEGORIES.AI_CHAT,
     keywords: ['通义千问', 'tongyi', 'qianwen'],

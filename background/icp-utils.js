@@ -54,11 +54,16 @@ const ICP_EXEMPT_DOMAINS = new Set([
   'heroku.com', 'herokuapp.com',
   'cloudflare.com', 'cloudflarepages.dev',
   'firebase.google.com', 'firebaseapp.com',
+  'jetbrains.com',
+
+  // —— 科研 ——
+  'mathworks.com',
 
   // —— 百科 / 知识 ——
   'wikipedia.org', 'wikimedia.org', 'wikiwand.com',
   'mozilla.org', 'developer.mozilla.org',
   'w3.org', 'w3schools.com',
+  'vndb.org',
 
   // —— 非中国软件 / 工具 ——
   'firefox.com',
@@ -101,6 +106,7 @@ const ICP_EXEMPT_DOMAINS = new Set([
   'nintendo.com',
   'playstation.com',
   'xbox.com',
+  'dlsite.com',
 
   // —— 云服务 / SaaS ——
   'dropbox.com', 'dropboxusercontent.com',
@@ -120,6 +126,8 @@ const ICP_EXEMPT_DOMAINS = new Set([
   'sendgrid.net',
   'twilio.com',
   'stripe.com',
+  'vultr.com',
+  'cloudcone.com',
 
   // —— AI / 研究 ——
   'openai.com', 'chatgpt.com',
