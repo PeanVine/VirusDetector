@@ -185,15 +185,26 @@ async function _lookupViaWhoisCx(normalizedDomain) {
     return null;
   }
 
+  // 一次性读取响应体，避免多次 clone
+  let responseText = '';
+  try { responseText = await response.clone().text(); } catch (e) { /* ignore */ }
+
+  // 检查是否为 HTML（WhoisCX API 可能已废弃）
+  const trimmed = responseText.trim();
+  if (trimmed.startsWith('<!DOCTYPE') || trimmed.startsWith('<html')) {
+    _recordError(normalizedDomain, 'parse',
+      'WhoisCX API 可能已废弃（返回 HTML 而非 JSON），建议移除或替换此回退路径',
+      { url, responseBody: responseText.substring(0, 200) });
+    return null;
+  }
+
   let json;
   try {
-    json = await response.json();
+    json = JSON.parse(responseText);
   } catch (parseError) {
-    let responseBody = '';
-    try { responseBody = await response.clone().text(); } catch (e) { /* ignore */ }
     _recordError(normalizedDomain, 'parse',
       `WhoisCX JSON 解析失败: ${parseError.message}`,
-      { url, responseBody: responseBody.substring(0, 500) });
+      { url, responseBody: responseText.substring(0, 500) });
     return null;
   }
 
