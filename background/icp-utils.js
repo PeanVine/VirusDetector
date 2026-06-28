@@ -165,6 +165,27 @@ const ICP_EXEMPT_DOMAINS = new Set([
   'proton.me', 'protonmail.com',
   'mega.nz', 'mega.io',
   'mediafire.com',
+
+  // —— 教育机构（全局匹配 .edu / .edu.cn / .edu.jp 等）——
+  'edu',
+  'edu.cn',
+  'edu.jp',
+  'ac.jp',        // 日本学术机构（如 u-tokyo.ac.jp）
+  'ac.cn',        // 中国科研机构（如 cas.ac.cn）
+  'ac.kr',        // 韩国学术机构
+  'ac.uk',        // 英国学术机构
+  'ac.th',        // 泰国学术机构
+
+  // —— 政府机构（全局匹配 .gov / .gov.cn 等）——
+  'gov',
+  'gov.cn',
+  'gov.hk',
+  'gov.tw',
+  'go.jp',        // 日本政府
+  'go.kr',        // 韩国政府
+  'gov.uk',       // 英国政府
+  'gov.au',       // 澳大利亚政府
+  'gov.sg',       // 新加坡政府
 ]);
 
 /**
