@@ -272,6 +272,26 @@ const PROVINCE_ABBREVIATIONS = [
 // 省份简称正则片段
 const PROVINCE_PATTERN = PROVINCE_ABBREVIATIONS.join('|');
 
+// ==================== ICP 备案号黑名单 ====================
+// 以下为已知的占位/虚假备案号，匹配到则视为未找到备案
+// 常用于模板演示或伪装成已备案的虚假号码
+// 涵盖所有省级行政区（31个）的 ICP备/证 格式
+const ICP_BLACKLIST = new Set(
+  (() => {
+    const PROVINCES = [...'京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤川青藏琼宁'];
+    const entries = [];
+    for (const p of PROVINCES) {
+      for (const t of ['备', '证']) {
+        entries.push(`${p}ICP${t}10000000号`);
+        entries.push(`${p}ICP${t}10000000号-1`);
+      }
+    }
+    return entries;
+  })()
+);
+// 额外：全零数字（如 00000000 开头）在所有格式下均视为无效
+// 该检测在 isBlacklistedIcp() 方法中通过正则完成
+
 /**
  * ICP备案号工具类
  */
@@ -507,6 +527,23 @@ export class IcpUtils {
       if (ICP_EXEMPT_DOMAINS.has(parent)) return true;
     }
 
+    return false;
+  }
+
+  /**
+   * 检查 ICP 备案号是否在黑名单中（已知占位/虚假号码）
+   * @param {string} icpNumber - ICP 备案号
+   * @returns {boolean}
+   */
+  static isBlacklistedIcp(icpNumber) {
+    if (!icpNumber) return false;
+    const trimmed = icpNumber.trim();
+    if (ICP_BLACKLIST.has(trimmed)) return true;
+    // 额外检查：数字部分全部为零的号码也视为无效
+    if (/\d+/.test(trimmed)) {
+      const digits = trimmed.match(/\d+/g);
+      if (digits && digits.some(d => /^0{6,}$/.test(d))) return true;
+    }
     return false;
   }
 }

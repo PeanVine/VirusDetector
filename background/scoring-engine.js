@@ -33,7 +33,7 @@ import { UrlUtils } from '../utils/url-utils.js';
 import { TrustedPlatforms } from '../utils/trusted-platforms.js';
 import {
   SCORE_THRESHOLD, SCORE_RULE_1, SCORE_RULE_2_HIGH, SCORE_RULE_2_LOW,
-  SCORE_RULE_3, SCORE_RULE_5, SCORE_RULE_5_PARTIAL, RISK_LEVEL,
+  SCORE_RULE_3, SCORE_RULE_3_FAKE, SCORE_RULE_5, SCORE_RULE_5_PARTIAL, RISK_LEVEL,
   SCORE_RULE_4A_SAME_PAGE, SCORE_RULE_4A_DEAD_LINK,
   SCORE_RULE_4A_DUPLICATE_LINK, SCORE_RULE_4A_DOWNLOAD_LINK_BONUS,
   SCORE_RULE_4B_DOWNLOAD_BTN, SCORE_RULE_4B_FILE_LINK, SCORE_RULE_4B_ARCHIVE_LINK,
@@ -56,8 +56,8 @@ export class ScoringEngine {
    */
   static async evaluate(ctx) {
     const {
-      url, domain, pageText, icpStrings, linkMetrics,
-      downloadState, pageMetrics
+      url, domain, pageText, icpStrings, hasIcpGovLink,
+      linkMetrics, downloadState, pageMetrics
     } = ctx;
 
     // 规则一：域名仿冒检测
@@ -65,7 +65,7 @@ export class ScoringEngine {
     const existingScore = result1.score;
 
     // 规则三：ICP检测
-    const result3 = this._evaluateRule3(domain, pageText, icpStrings);
+    const result3 = this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink);
 
     // 优化：域名检测和ICP检测均确认安全 → 跳过规则四/五（官方网站早期退出）
     const isConfirmedOfficial = (
@@ -204,19 +204,23 @@ export class ScoringEngine {
 
   // ==================== 规则三：ICP备案号缺失 (50分) ====================
   /**
-   * ICP 备案检测。
+   * 规则三：ICP备案检测（≤50分）
    *
-   * 判定链路（不再依赖域名推测国籍）：
-   *   1. 官方域名                       → 跳过（0 分）
-   *   2. 页面中找到 ICP 备案号           → 安全（0 分）
-   *   3. 未找到且站点在外国豁免白名单中    → 跳过（0 分，确定无需备案）
-   *   4. 未找到但页面有显著中文内容       → +50 分（中国站点缺少备案）
-   *   5. 未找到、不在白名单、也无中文内容  → +20 分（弱信号，不确定）
+   * 判定链路：
+   *   1. 官方域名                          → 0  PASS
+   *   2a. ICP + 非黑名单 + 可点击政府链接    → 0  PASS（已核验）
+   *   2b. ICP + 缺政府链接 且 页有中文       → +50 TRIGGERED（虚假备案嫌疑）
+   *   2c. ICP + 缺政府链接 且 无中文         → +30 TRIGGERED（虚假备案嫌疑）
+   *   2d. ICP 号码在黑名单中                → 同 2b/2c（按有无中文判定）
+   *   3.  无 ICP + 豁免白名单               → 0  NEUTRAL
+   *   4.  无 ICP + 有中文                   → +50 TRIGGERED
+   *   5.  无 ICP + 无中文 + 非白名单         → +20 WARN
    */
-  static _evaluateRule3(domain, pageText, icpStrings) {
+  static _evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink) {
     const result = {
       score: 0, triggered: false,
-      detail: '', detailCN: '', icpFound: false, icpNumbers: []
+      detail: '', detailCN: '', icpFound: false, icpNumbers: [],
+      icpVerified: false, icpBlacklisted: false
     };
 
     // 1. 官方域名本尊 → 跳过
@@ -228,19 +232,49 @@ export class ScoringEngine {
       return result;
     }
 
-    // 2. 搜索 ICP 备案号
+    // 2. 搜索 ICP 备案号（含真实验证）
     const icpResult = IcpUtils.searchIcpNumber(pageText, icpStrings);
 
     if (icpResult.found) {
-      result.status = 'pass';
+      const realNumbers = icpResult.numbers.filter(n => !IcpUtils.isBlacklistedIcp(n));
+      const hasBlacklisted = realNumbers.length < icpResult.numbers.length;
+      result.icpBlacklisted = hasBlacklisted;
+
+      // 2a. 真实验证通过 → 完全安全
+      if (realNumbers.length > 0 && hasIcpGovLink) {
+        result.status = 'pass';
+        result.icpFound = true;
+        result.icpVerified = true;
+        result.icpNumbers = realNumbers;
+        result.detail = `检测到ICP备案号: ${realNumbers[0]}（已核验）`;
+        result.detailCN = `ICP备案: 已检测到 (${realNumbers[0]})`;
+        return result;
+      }
+
+      // 2b/2c/2d: ICP 存在但不可核验 → 可疑行为，直接加分
       result.icpFound = true;
-      result.icpNumbers = icpResult.numbers;
-      result.detail = `检测到ICP备案号: ${icpResult.numbers[0]}`;
-      result.detailCN = `ICP备案: 已检测到 (${icpResult.numbers[0]})`;
-      return result;
+      if (realNumbers.length > 0) result.icpNumbers = realNumbers;
+
+      // 根据中文内容判定分数
+      const cjkResult = IcpUtils.detectCJKContent(pageText);
+      if (cjkResult.hasCJK) {
+        result.score = SCORE_RULE_3;  // +50 — 中文站用虚假/未核验备案
+        result.triggered = true;
+        let reason = result.icpBlacklisted ? '备案号疑似虚假' : '备案号缺少可点击核验链接';
+        result.detail = `ICP备案疑似虚假（域名${domain}，${reason}，页面含${cjkResult.cjkCount}个中文字符）`;
+        result.detailCN = `ICP备案: 虚假/未核验（${reason}）`;
+        return result;
+      } else {
+        result.score = SCORE_RULE_3_FAKE;  // +30 — 无中文但显示了虚假备案号
+        result.triggered = true;
+        let reason = result.icpBlacklisted ? '备案号疑似虚假' : '备案号缺少可点击核验链接';
+        result.detail = `ICP备案疑似虚假（域名${domain}，${reason}，页面无中文内容）`;
+        result.detailCN = `ICP备案: 虚假/未核验（${reason}）`;
+        return result;
+      }
     }
 
-    // 3. 未找到 → 判定是否需要备案
+    // 3. 未找到 ICP → 判定是否需要备案
     // 3a. 外国站点豁免白名单 → 确定不需要 ICP
     if (IcpUtils.isIcpExempt(domain)) {
       result.status = 'neutral';
@@ -255,7 +289,7 @@ export class ScoringEngine {
       result.score = SCORE_RULE_3;  // +50
       result.triggered = true;
       result.detail = `未检测到ICP备案号（域名${domain}，页面含${cjkResult.cjkCount}个中文字符，占比${(cjkResult.cjkRatio * 100).toFixed(1)}%）`;
-      result.detailCN = `ICP备案: 未检测到备案号`;
+      result.detailCN = 'ICP备案: 未检测到备案号';
       return result;
     }
 
@@ -263,7 +297,7 @@ export class ScoringEngine {
     result.score = 20;
     result.status = 'warn';
     result.detail = `无中文内容且非已知外国站点（域名${domain}），缺少ICP为弱信号`;
-    result.detailCN = `ICP备案: 未检测到备案号（弱信号）`;
+    result.detailCN = 'ICP备案: 未检测到备案号（弱信号）';
 
     return result;
   }

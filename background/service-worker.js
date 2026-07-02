@@ -576,6 +576,7 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
     domain: tabState.domain || domain,
     pageText: tabState.pageText || '',
     icpStrings: tabState.icpStrings || [],
+    hasIcpGovLink: tabState.hasIcpGovLink || false,
     linkMetrics: linkMetrics || tabState.linkMetrics || null,
     downloadState: tabState.downloadState || { hasDownloadedArchive: false },
     pageMetrics: pageMetrics || tabState.pageMetrics || null
@@ -783,7 +784,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'PAGE_ANALYSIS_RESULT': {
       const tabId = sender.tab ? sender.tab.id : null;
       if (!tabId) { sendResponse({ received: false }); return false; }
-      const { url, domain, pageText, icpStrings, pageMetrics, linkMetrics } = message.payload;
+      const { url, domain, pageText, icpStrings, pageMetrics, linkMetrics, hasIcpGovLink } = message.payload;
 
       // 竞态条件防护：校验 content script 所在标签页的当前 URL 是否与采集数据的域名一致
       // 若用户已导航到其他页面，则丢弃此消息（旧页面的数据不应污染新页面的检测结果）
@@ -805,6 +806,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       loadTabState(tabId).then(async (ts) => {
         ts.pageText = pageText || '';
         ts.icpStrings = icpStrings || [];
+        ts.hasIcpGovLink = !!hasIcpGovLink;
         ts.url = url || ts.url;
         ts.domain = domain || ts.domain;
         if (pageMetrics) ts.pageMetrics = pageMetrics;

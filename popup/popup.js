@@ -275,6 +275,39 @@
         textEl.textContent = rule.detailCN;
         textEl.className = 'detail-text passed';
       }
+
+      // —— ICP 备案号核验状态与查询链接 ——
+      if (key === 'rule3') {
+        // 移除旧的核验元素
+        const oldBadge = el.querySelector('.icp-verify-badge');
+        const oldLink = el.querySelector('.icp-query-link');
+        if (oldBadge) oldBadge.remove();
+        if (oldLink) oldLink.remove();
+
+        if (rule && rule.icpVerified && rule.icpNumbers && rule.icpNumbers.length > 0) {
+          // 已核验 → 显示工信部查询链接
+          textEl.textContent = `ICP备案: 已检测到 (${rule.icpNumbers[0]})`;
+          const linkEl = document.createElement('a');
+          linkEl.className = 'icp-query-link';
+          linkEl.href = 'https://beian.miit.gov.cn/';
+          linkEl.target = '_blank';
+          linkEl.rel = 'noopener noreferrer';
+          linkEl.textContent = '工信部查询 ›';
+          el.appendChild(linkEl);
+        } else if (rule && rule.icpBlacklisted) {
+          // 备案号疑似虚假
+          const badge = document.createElement('span');
+          badge.className = 'icp-verify-badge badge-fake';
+          badge.textContent = '虚假备案';
+          el.appendChild(badge);
+        } else if (rule && rule.icpFound && !rule.icpVerified) {
+          // 已找到但未核验
+          const badge = document.createElement('span');
+          badge.className = 'icp-verify-badge badge-unverified';
+          badge.textContent = '未核验';
+          el.appendChild(badge);
+        }
+      }
     }
   }
 

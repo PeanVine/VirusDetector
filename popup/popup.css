@@ -444,6 +444,40 @@ body {
   color: var(--text2);
 }
 
+/* ===== ICP 备案核验 ===== */
+.icp-query-link {
+  display: inline-block;
+  margin-left: 20px;
+  font-size: 11px;
+  color: #1976D2;
+  text-decoration: none;
+  cursor: pointer;
+}
+.icp-query-link:hover {
+  text-decoration: underline;
+  color: #1565C0;
+}
+
+.icp-verify-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 6px;
+  font-size: 10px;
+  line-height: 16px;
+  border-radius: 3px;
+  font-weight: 500;
+}
+.icp-verify-badge.badge-fake {
+  background: #ffebee;
+  color: #c62828;
+  border: 1px solid #ef9a9a;
+}
+.icp-verify-badge.badge-unverified {
+  background: #fff3e0;
+  color: #e65100;
+  border: 1px solid #ffcc80;
+}
+
 /* ===== Safety Tips ===== */
 #safety-tips {
   background: var(--red-light);

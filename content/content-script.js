@@ -502,6 +502,20 @@
     return icpStrings;
   }
 
+  /**
+   * 检测页面是否存在可点击的工信部备案查询链接
+   * 检查 <a> 标签 href 是否指向 beian.miit.gov.cn 等政府备案域名
+   * @returns {boolean}
+   */
+  function checkIcpGovLink() {
+    try {
+      var links = document.querySelectorAll('a[href*="beian.miit.gov.cn"], a[href*="beian.gov.cn"], a[href*="miitbeian.gov.cn"]');
+      return links.length > 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
   // ==================== 发送分析结果 ====================
 
   function safeCollect(fn, fallback) {
@@ -523,10 +537,12 @@
       console.error('[VirusDetector] 链接分析采集失败:', e);
     }
 
+    var hasIcpGovLink = checkIcpGovLink();
     var payload = {
       url: window.location.href, domain: window.location.hostname, title: document.title,
       pageText: safeCollect(function() { return (document.body ? document.body.innerText : '').substring(0, 15000); }, ''),
-      icpStrings: icpStrings, pageMetrics: pageMetrics, linkMetrics: linkMetrics
+      icpStrings: icpStrings, pageMetrics: pageMetrics, linkMetrics: linkMetrics,
+      hasIcpGovLink: hasIcpGovLink
     };
 
     // 二次扫描去重：与首次结果比对，无新增数据则跳过发送
@@ -573,6 +589,7 @@
             pageMetrics: safeCollect(collectPageMetrics, null),
             linkMetrics: linkMetrics,
             icpStrings: safeCollect(findIcpStrings, []),
+            hasIcpGovLink: checkIcpGovLink(),
             pageText: (document.body ? document.body.innerText : '').substring(0, 15000),
             title: document.title,
             url: window.location.href

@@ -17,6 +17,7 @@ export const SCORE_RULE_1 = 60;              // 规则一：域名仿冒
 export const SCORE_RULE_2_HIGH = 40;         // 规则二：压缩包下载（域名已有≥30嫌疑）
 export const SCORE_RULE_2_LOW = 10;          // 规则二：压缩包下载（弱信号）
 export const SCORE_RULE_3 = 50;             // 规则三：ICP备案号缺失（所有网站）
+export const SCORE_RULE_3_FAKE = 30;        // 规则三：ICP备案号存在但无法核验（无政府链接/虚假号码）
 
 // 规则四：链接分析（替代证书检测）
 export const SCORE_RULE_4A_SAME_PAGE = 20;      // 规则四A-① ≥3个链接指向当前页本身（完全一致URL）
