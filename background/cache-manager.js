@@ -6,7 +6,7 @@
  * 恶意和安全结果均会缓存以减少重复分析。
  *
  * @module cache-manager
- * @version 2.2.4
+ * @version 2.3.0
  *
  * 缓存条目结构：
  *   {

@@ -4,26 +4,27 @@
  * 实现多规则评分体系，总分 >= 100 分时判定为危险网站。
  *
  * @module scoring-engine
- * @version 2.2.4
+ * @version 2.3.0
  *
  * 评分规则：
- *   规则一 域名仿冒         → 60 分 | 5 层递进：子串包含 → 段级关键词 → 可疑TLD → 关键词堆叠 → 编辑距离
+ *   规则一 域名仿冒         → 60 分 | 3 规则递进：精确段匹配 → 边界包含 → 关键词堆叠
  *   规则二 压缩包下载       → 40 分 | 域名已有 >=30 分嫌疑时给高分，否则 10 分弱信号
  *   规则三 ICP 备案缺失     → 50 分 | 对所有网站检测 ICP 备案号
  *   规则四 链接分析         → 最高 70 分 | Part A (同页/死链/重复链接) + Part B (下载按钮/压缩包链接)
  *   规则五 代码工程化       → 最高 60 分 | 三信号组合判定（DOM复杂度+框架检测+外部资源），2信号+20，3信号+30
  *                              + 子规则：关键词预筛选 + Emoji密度检测（推广页面Emoji滥用），最高+30
- *   域名年龄评分             → 最高 60 分 | 基于 Whois API 的 S 型衰减函数计分，新注册域名更可疑
+ *   域名年龄评分             → 最高 60 分 | 基于 RDAP/WhoisCX 双查询的 S 型衰减函数计分，新注册域名更可疑
  *   域名年龄减分             → 最高 20 分 | 注册时间长的域名可抵消部分可疑分数（需当前分数 >= 20）
  *   下载链接跨域检测         → 最高 20 分 | 跨域下载 + 新注册域名附加分（由 Service Worker 下载事件触发）
  *
  * 优化策略：
  *   - 可信平台白名单：Wiki/博客/代码托管等 UGC 平台的注册域命中后跳过规则一，避免误报
+ *   - PSL 统一域名标准化：注册域提取应用于白名单、官方匹配、RDAP/Whois 查询
  *   - 官方网站早期退出：域名+ICP 均确认安全后跳过规则四/五
  *   - 规则四 Part B-b 仅对压缩包链接加分，普通文件链接不再单独计分
  *   - 规则五区分三信号组合：DOM节点数+框架标记+外部资源，避免对正常简单页面误报
  *   - 规则五子规则：先通过推广关键词预筛选确认页面性质，再计算Emoji密度，分段线性映射加分
- *   - Whois API 查询结果缓存 24 小时，避免重复请求
+ *   - RDAP/WhoisCX 查询结果缓存 24 小时，避免重复请求
  */
 
 import { DomainDatabase } from './domain-database.js';
@@ -136,26 +137,24 @@ export class ScoringEngine {
       matchedEntry: null, correctUrl: null, officialName: null
     };
 
-    // ---- 可信平台白名单前置检查 ----
-    // 提取注册域（eTLD+1），若命中白名单则完全跳过仿冒检测。
-    // 这些平台的子页面（如 minecraft.fandom.com）属于用户生成内容，
-    // 不应因 URL 中包含品牌关键词而被误判为仿冒官网。
     const mainDomain = UrlUtils.getMainDomain(domain);
+
+    // ---- 可信平台白名单前置检查 ----
     if (TrustedPlatforms.isTrusted(mainDomain)) {
       result.detail = `可信平台（${mainDomain}），跳过域名仿冒检测`;
       result.detailCN = `域名: 可信平台（${mainDomain}）`;
       return result;
     }
 
-    // 精确匹配官方域名 → 安全
-    const official = DomainDatabase.findByDomain(domain);
+    // 精确匹配官方域名（使用 PSL 注册域）→ 安全
+    const official = DomainDatabase.findByDomain(mainDomain);
     if (official) {
       result.detail = '官方网站，域名匹配';
       result.detailCN = '域名: 官方网站';
       return result;
     }
 
-    // 检测域名仿冒
+    // 检测域名仿冒（使用完整 hostname，子域名中可能含品牌关键词）
     const spoof = DomainDatabase.detectSpoof(domain);
     if (spoof) {
       result.score = SCORE_RULE_1;  // +60
