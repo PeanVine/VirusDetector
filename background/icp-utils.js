@@ -237,7 +237,7 @@ export class IcpUtils {
    * 注：\d{6,12} 兼容旧6位、新8位及近年出现的9-10位备案号
    */
   static ICP_FULL_REGEX = new RegExp(
-    `(${PROVINCE_PATTERN})ICP[备证]\\d{6,12}号(-\\d+)?`,
+    `(${PROVINCE_PATTERN})\\s*ICP\\s*[备证]\\s*\\d{6,12}\\s*号(?:\\s*-\\s*\\d+)?`,
     'gi'
   );
 
@@ -246,7 +246,7 @@ export class IcpUtils {
    * 用于宽松匹配（允许缺失"号"字、大小写如 icp/ICP/Icp 均兼容）
    */
   static ICP_SIMPLE_REGEX = new RegExp(
-    `(${PROVINCE_PATTERN})ICP[备证]\\d{6,12}`,
+    `(${PROVINCE_PATTERN})\\s*ICP\\s*[备证]\\s*\\d{6,12}`,
     'gi'
   );
 
