@@ -874,7 +874,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: 'Minecraft',
-    officialDomains: ['minecraft.net', 'mojang.com'],
+    officialDomains: ['minecraft.net', 'minecraft.wiki', 'mojang.com'],
     correctUrl: 'https://www.minecraft.net',
     category: SOFTWARE_CATEGORIES.GAME,
     keywords: ['Minecraft', 'minecraft', '我的世界', 'Mojang'],
