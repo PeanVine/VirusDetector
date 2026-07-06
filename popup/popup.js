@@ -1,5 +1,5 @@
 /**
- * 银狐木马检测 - Popup UI (v2.4.0-alpha.1)
+ * 银狐木马检测 - Popup UI
  * SVG图标系统 + 优化排版 + 白名单极简模式
  */
 (function () {
@@ -419,6 +419,17 @@
     }
     els.whitelistBtn.disabled = false;
   });
+
+  // ==================== 版本号注入（从 manifest 读取，无需随版本号修改 HTML） ====================
+  (function injectVersion() {
+    try {
+      const v = chrome.runtime.getManifest().version_name || chrome.runtime.getManifest().version;
+      const subtitle = document.querySelector('.header-subtitle');
+      const footerVer = document.querySelector('.footer-version');
+      if (subtitle) subtitle.textContent = 'Virus Detector v' + v;
+      if (footerVer) footerVer.textContent = 'v' + v;
+    } catch (e) { /* ignore */ }
+  })();
 
   // ==================== 初始化 ====================
 

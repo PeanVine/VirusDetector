@@ -3,7 +3,7 @@
 > Chrome/Edge 浏览器扩展，实时检测银狐木马（Silver Fox Trojan）钓鱼与仿冒网站。
 
 [![Manifest](https://img.shields.io/badge/Manifest-V3-blue)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Version](https://img.shields.io/badge/Version-2.4.0-alpha.1-orange)](https://github.com)
+[![Version](https://img.shields.io/badge/Version-2.4.0-alpha.2-orange)](https://github.com)
 
 ---
 
@@ -13,7 +13,7 @@
 
 | 规则 | 最高加分 | 检测内容 |
 | ---- | -------- | -------- |
-| 域名仿冒 | **60** | 4 层递进匹配（精确段匹配、连字符连接段匹配、边界包含、关键词堆叠） |
+| 域名仿冒 | **60** | 5 规则递进 + 去连字符二次检测（精确段匹配、子串包含、关键词堆叠、约束编辑距离） |
 | 压缩包下载 | **40** | 两阶段检测：Phase A 主动扫描页面跨域压缩包链接（上限 30 分）+ Phase B 实际下载拦截（上限 40 分） |
 | ICP 备案缺失 | **50** | 对所有网站检测 ICP 备案号（含 beian.gov.cn 等政府链接提取） |
 | 链接分析 | **70** | Part A（同页链接/死链/重复链接）+ Part B（下载按钮/压缩包链接） |
@@ -68,7 +68,7 @@ VirusDetector/
 ├── background/
 │   ├── service-worker.js              # 主协调器 —— 导航监听、下载拦截、消息路由、弹窗调度
 │   ├── scoring-engine.js              # 多规则评分引擎 —— 综合评估与风险定级
-│   ├── domain-database.js             # 172 品牌域名数据库 + 4 层仿冒检测
+│   ├── domain-database.js             # 120 品牌域名数据库 + 5 规则仿冒检测 + 去连字符二次检测
 │   ├── download-blacklist.js          # 下载域名黑名单 —— 跨站免疫、90 天自动清理
 │   ├── rdap-client.js                 # RDAP 注册信息查询客户端
 │   ├── whois-client.js                # 统一域名查询入口（RDAP 主 + WhoisCX 回退）

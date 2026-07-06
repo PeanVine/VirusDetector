@@ -4,7 +4,6 @@
  * 是整个扩展的中央调度模块，负责协调所有后台任务：
  *
  * @module service-worker
- * @version 2.4.0-alpha.1
  *
  * 核心职责：
  *   1. 页面导航监听 → 白名单检查 → 缓存查询 → 触发评分分析
@@ -29,7 +28,8 @@ import { registerNonChineseBrandDomains } from './icp-utils.js';
 import { UrlUtils } from '../utils/url-utils.js';
 import {
   SCORE_THRESHOLD, DOWNLOAD_CONFIRM_THRESHOLD, RISK_LEVEL, MSG_TYPES,
-  STORAGE_KEYS, CACHE_TTL, DETECT_NON_ARCHIVE_FILES_DEFAULT
+  STORAGE_KEYS, CACHE_TTL, DETECT_NON_ARCHIVE_FILES_DEFAULT,
+  VERSION
 } from '../utils/constants.js';
 
 // ==================== URL 协议守卫 ====================
@@ -1277,4 +1277,4 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
-console.log('[ServiceWorker] ✅ 银狐木马检测扩展 v2.4.0-alpha.1 已就绪');
+console.log(`[ServiceWorker] ✅ 银狐木马检测扩展 v${VERSION} 已就绪`);

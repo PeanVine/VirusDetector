@@ -5,7 +5,6 @@
  * 替代原有的 WhoisCX API，使用 IANA RDAP 引导文件 + RDAP 服务端查询。
  *
  * @module rdap-client
- * @version 2.4.0-alpha.1
  *
  * 查询流程：
  *   1. 从 IANA 下载 RDAP 引导文件 https://data.iana.org/rdap/dns.json

@@ -5,7 +5,6 @@
  * RDAP 基于 RFC 9082/9083 协议，WhoisCX 作为全球覆盖的备用查询。
  *
  * @module whois-client
- * @version 2.4.0-alpha.1
  *
  * 查询链路：
  *   WhoisClient.lookup(domain)
@@ -30,7 +29,8 @@
  */
 
 import {
-  WHOIS_API_URL, WHOIS_CACHE_TTL, WHOIS_API_TIMEOUT
+  WHOIS_API_URL, WHOIS_CACHE_TTL, WHOIS_API_TIMEOUT,
+  VERSION
 } from '../utils/constants.js';
 import { RdapClient } from './rdap-client.js';
 import { refreshPublicSuffixDNS } from '../utils/url-utils.js';
@@ -221,7 +221,7 @@ async function _lookupViaWhoisCx(normalizedDomain) {
       signal: controller.signal,
       headers: {
         'Accept': '*/*',
-        'User-Agent': 'VirusDetector/2.4.0-alpha.1 (Browser Extension; RDAP+WhoisCX)'
+        'User-Agent': `VirusDetector/${VERSION} (Browser Extension; RDAP+WhoisCX)`
       }
     });
 
