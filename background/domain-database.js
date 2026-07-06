@@ -260,7 +260,7 @@ const DOMAIN_DATABASE = [
     officialDomains: ['pinyin.sogou.com', 'shurufa.sogou.com'],
     correctUrl: 'https://pinyin.sogou.com',
     category: SOFTWARE_CATEGORIES.INPUT_METHOD,
-    keywords: ['搜狗输入法', '搜狗拼音', 'sogou输入法', '搜狗拼音输入法', '搜狗'],
+    keywords: ['搜狗输入法', '搜狗拼音', 'sogou输入法', '搜狗拼音输入法', '搜狗', 'sogou'],
     isChineseBrand: true
   },
   {
@@ -289,7 +289,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: '手心输入法',
-    officialDomains: ['www.xinshuru.com'],
+    officialDomains: ['xinshuru.com'],
     correctUrl: 'https://www.xinshuru.com',
     category: SOFTWARE_CATEGORIES.INPUT_METHOD,
     keywords: ['手心输入法', '手心'],
@@ -309,7 +309,7 @@ const DOMAIN_DATABASE = [
     officialDomains: ['docs.qq.com'],
     correctUrl: 'https://docs.qq.com',
     category: SOFTWARE_CATEGORIES.OFFICE,
-    keywords: ['腾讯文档', 'docs.qq'],
+    keywords: ['腾讯文档'],
     isChineseBrand: true
   },
   {
@@ -379,10 +379,10 @@ const DOMAIN_DATABASE = [
   },
   {
     name: '搜狐视频',
-    officialDomains: ['tv.sohu.com'],
+    officialDomains: ['tv.sohu.com', 'sohu.com'],
     correctUrl: 'https://tv.sohu.com',
     category: SOFTWARE_CATEGORIES.VIDEO,
-    keywords: ['搜狐视频', 'sohu视频'],
+    keywords: ['搜狐视频', 'sohu视频', '搜狐', 'sohu'],
     isChineseBrand: true
   },
 // ========== 音乐软件 ==========
@@ -404,7 +404,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: '酷狗音乐',
-    officialDomains: ['kugou.com', 'www.kugou.com'],
+    officialDomains: ['kugou.com'],
     correctUrl: 'https://www.kugou.com',
     category: SOFTWARE_CATEGORIES.MUSIC,
     keywords: ['酷狗', 'kugou', '酷狗音乐'],
@@ -412,7 +412,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: '酷我音乐',
-    officialDomains: ['kuwo.cn', 'www.kuwo.cn'],
+    officialDomains: ['kuwo.cn'],
     correctUrl: 'https://www.kuwo.cn',
     category: SOFTWARE_CATEGORIES.MUSIC,
     keywords: ['酷我', 'kuwo', '酷我音乐'],
@@ -440,7 +440,7 @@ const DOMAIN_DATABASE = [
     officialDomains: ['pan.baidu.com'],
     correctUrl: 'https://pan.baidu.com',
     category: SOFTWARE_CATEGORIES.CLOUD_STORAGE,
-    keywords: ['百度网盘', '百度云', '百度云盘', 'baidupan', 'baiduyun'],
+    keywords: ['百度网盘', '百度云盘', 'baidupan', 'baiduyun'],
     isChineseBrand: true
   },
   {
@@ -562,7 +562,7 @@ const DOMAIN_DATABASE = [
     officialDomains: ['xunlei.com', 'dl.xunlei.com', 'mobile.xunlei.com'],
     correctUrl: 'https://www.xunlei.com',
     category: SOFTWARE_CATEGORIES.DOWNLOAD_TOOL,
-    keywords: ['迅雷', 'xunlei', 'Thunder', '迅雷下载', 'Thunder Network'],
+    keywords: ['迅雷', 'xunlei', 'Thunder', '迅雷下载'],
     isChineseBrand: true
   },
   {
@@ -570,7 +570,7 @@ const DOMAIN_DATABASE = [
     officialDomains: ['internetdownloadmanager.com', 'secure.internetdownloadmanager.com'],
     correctUrl: 'https://www.internetdownloadmanager.com',
     category: SOFTWARE_CATEGORIES.DOWNLOAD_TOOL,
-    keywords: ['IDM', 'Internet Download Manager', 'Internet Download Manager 下载', 'IDM下载工具'],
+    keywords: ['IDM', 'Internet Download Manager', 'IDM下载工具'],
     isChineseBrand: false
   },
   {
@@ -750,7 +750,7 @@ const DOMAIN_DATABASE = [
     officialDomains: ['cloud.baidu.com', 'intl.cloud.baidu.com'],
     correctUrl: 'https://cloud.baidu.com',
     category: SOFTWARE_CATEGORIES.DEVELOPER,
-    keywords: ['百度云', '百度智能云', 'baidu cloud'],
+    keywords: ['百度智能云', 'baidu cloud'],
     isChineseBrand: true
   },
   {
@@ -774,7 +774,7 @@ const DOMAIN_DATABASE = [
     officialDomains: ['gitee.com'],
     correctUrl: 'https://gitee.com',
     category: SOFTWARE_CATEGORIES.DEVELOPER,
-    keywords: ['Gitee', 'gitee', '码云', 'OSCHINA'],
+    keywords: ['Gitee', 'gitee', '码云'],
     isChineseBrand: true
   },
   {
@@ -790,7 +790,7 @@ const DOMAIN_DATABASE = [
     officialDomains: ['v2ex.com'],
     correctUrl: 'https://www.v2ex.com',
     category: SOFTWARE_CATEGORIES.DEVELOPER,
-    keywords: ['V2EX', 'v2ex', 'way to explore'],
+    keywords: ['V2EX', 'v2ex'],
     isChineseBrand: false
   },
   {
@@ -828,7 +828,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: 'ToDesk',
-    officialDomains: ['todesk.com'],
+    officialDomains: ['todesk.com', 'todeskai.com'],
     correctUrl: 'https://www.todesk.com',
     category: SOFTWARE_CATEGORIES.SYSTEM_TOOL,
     keywords: ['ToDesk', 'todesk', '远程桌面', '远程控制'],
@@ -935,7 +935,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: '月轮加速器',
-    officialDomains: ['www.yuelun.com'],
+    officialDomains: ['yuelun.com'],
     correctUrl: 'https://www.yuelun.com',
     category: SOFTWARE_CATEGORIES.GAME_ACCELERATOR,
     keywords: ['月轮', 'yuelun', '月轮加速器', '月轮网游加速器'],
