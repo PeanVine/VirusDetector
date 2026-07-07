@@ -223,9 +223,9 @@ Part B（仅当 Part A 为 0 时执行）：
 
 先通过推广/产品关键词（"下载""产品""软件""download""product""software"等 49 个中英文关键词）预筛选确认页面是否为推广性质，再计算 Emoji 密度并通过分段线性映射加分：
 
-- pageText 长度 < 100 字符 → 跳过（0 分）
+- 文本长度 < 100 字符 → 跳过（0 分）
 - 关键词匹配数 < 阈值（默认 1） → 跳过（0 分，非推广页面）
-- 计算密度：`density = (emojiCount / pageText.length) × 1000`（个/千字符）
+- 计算密度：`density = (emojiCount / textLength) × 1000`（个/千字符）。该计算在 Content Script 本地完成，后台只接收计数和密度等派生指标，不接收页面正文。
 - 分段映射：density < 2.0 → 0；2.0 ≤ density < 10.0 → `(density - 2) / 8 × 30`；density ≥ 10.0 → 30（封顶）
 - Emoji 匹配使用 Unicode 属性转义正则 `/\p{Emoji_Presentation}|\p{Emoji}️/gu`，覆盖肤色修饰符与零宽连接符序列
 
@@ -344,7 +344,7 @@ score = floor(60 / (1 + (x / (60 × b))^a))
 | 消息类型 | 方向 | 用途 |
 | -------- | ---- | ---- |
 | `PAGE_ANALYSIS_RESULT` | Content → Background | 页面分析数据上报 |
-| `REQUEST_PAGE_TEXT` | Background → Content | 请求重新采集页面数据 |
+| `REQUEST_PAGE_TEXT` | Background → Content | 请求重新采集页面派生指标（不返回正文） |
 | `GET_TAB_STATE` | Popup → Background | 查询当前标签页状态 |
 | `ADD_TO_WHITELIST` | Popup → Background | 添加域名到白名单 |
 | `REMOVE_FROM_WHITELIST` | Popup → Background | 从白名单移除域名 |

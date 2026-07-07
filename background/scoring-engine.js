@@ -64,7 +64,7 @@ export class ScoringEngine {
    */
   static async evaluate(ctx) {
     const {
-      url, domain, pageText, icpStrings, hasIcpGovLink,
+      url, domain, pageText, textSignals, icpStrings, hasIcpGovLink,
       linkMetrics, downloadState, pageMetrics
     } = ctx;
 
@@ -73,7 +73,7 @@ export class ScoringEngine {
     const existingScore = result1.score;
 
     // 规则三：ICP检测
-    const result3 = this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink);
+    const result3 = this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink, textSignals);
 
     // 优化：域名检测和ICP检测均确认安全 → 跳过规则四/五（官方网站早期退出）
     const isConfirmedOfficial = (
@@ -95,7 +95,7 @@ export class ScoringEngine {
       };
     } else {
       result4 = this._evaluateRule4(linkMetrics, domain);
-      result5 = this._evaluateRule5(pageMetrics, domain, pageText);
+      result5 = this._evaluateRule5(pageMetrics, domain, pageText, textSignals);
     }
 
     // 规则二：Phase A 主动扫描 + Phase B 被动检测
@@ -194,6 +194,25 @@ export class ScoringEngine {
     }
 
     return result;
+  }
+
+  /**
+   * 获取 CJK 内容判定结果。
+   * 新版本优先使用 Content Script 本地计算的派生指标，避免传输/持久化页面正文。
+   * @param {string} pageText - 兼容旧消息的页面正文
+   * @param {Object|null} textSignals - 派生文本指标
+   * @returns {{hasCJK: boolean, cjkCount: number, cjkRatio: number}}
+   */
+  static _getCjkResult(pageText, textSignals) {
+    if (textSignals && typeof textSignals === 'object' &&
+        typeof textSignals.hasCJK === 'boolean') {
+      return {
+        hasCJK: textSignals.hasCJK,
+        cjkCount: Number(textSignals.cjkCount || 0),
+        cjkRatio: Number(textSignals.cjkRatio || 0)
+      };
+    }
+    return IcpUtils.detectCJKContent(pageText || '');
   }
 
   // ==================== 规则二：压缩包下载 (最高 40 分) ====================
@@ -340,7 +359,7 @@ export class ScoringEngine {
    *   4.  无 ICP + 有中文                   → +50 TRIGGERED
    *   5.  无 ICP + 无中文 + 非白名单         → +20 WARN
    */
-  static _evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink) {
+  static _evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink, textSignals) {
     const result = {
       score: 0, triggered: false,
       detail: '', detailCN: '', icpFound: false, icpNumbers: [],
@@ -357,7 +376,7 @@ export class ScoringEngine {
     }
 
     // 2. 搜索 ICP 备案号（含真实验证）
-    const icpResult = IcpUtils.searchIcpNumber(pageText, icpStrings);
+    const icpResult = IcpUtils.searchIcpNumber(pageText || '', icpStrings);
 
     if (icpResult.found) {
       const realNumbers = icpResult.numbers.filter(n => !IcpUtils.isBlacklistedIcp(n));
@@ -380,7 +399,7 @@ export class ScoringEngine {
       if (realNumbers.length > 0) result.icpNumbers = realNumbers;
 
       // 根据中文内容判定分数
-      const cjkResult = IcpUtils.detectCJKContent(pageText);
+      const cjkResult = this._getCjkResult(pageText, textSignals);
       if (cjkResult.hasCJK) {
         result.score = SCORE_RULE_3;  // +50 — 中文站用虚假/未核验备案
         result.triggered = true;
@@ -408,7 +427,7 @@ export class ScoringEngine {
     }
 
     // 3b. 页面内容检测：有显著中文内容 → 中国站点，必须有 ICP
-    const cjkResult = IcpUtils.detectCJKContent(pageText);
+    const cjkResult = this._getCjkResult(pageText, textSignals);
     if (cjkResult.hasCJK) {
       result.score = SCORE_RULE_3;  // +50
       result.triggered = true;
@@ -540,9 +559,10 @@ export class ScoringEngine {
    *
    * @param {Object} pageMetrics - 来自 content script 的页面度量
    * @param {string} domain - 页面域名（保留参数，供未来扩展）
-   * @param {string} pageText - 页面文本内容（用于子规则：关键词预筛选 + Emoji密度检测）
+   * @param {string} pageText - 页面文本内容（兼容旧消息；新消息使用 textSignals）
+   * @param {Object} textSignals - 内容脚本本地计算的派生文本指标
    */
-  static _evaluateRule5(pageMetrics, domain, pageText) {
+  static _evaluateRule5(pageMetrics, domain, pageText, textSignals) {
     const result = {
       score: 0, triggered: false, status: 'pass',
       detail: '', detailCN: '代码工程化: 正常',
@@ -557,7 +577,7 @@ export class ScoringEngine {
     }
 
     // ---- 子规则 B：关键词预筛选 + Emoji 密度检测（独立于三信号体系） ----
-    const emojiDensityResult = this._evaluateRule5EmojiDensity(pageText);
+    const emojiDensityResult = this._evaluateRule5EmojiDensity(pageText, textSignals);
 
     // ---- 子规则 A：三信号组合判定 ----
     let signalScore = 0;
@@ -651,23 +671,53 @@ export class ScoringEngine {
    * 再计算 Emoji 密度并通过分段线性映射得出加分值（上限 30 分）。
    *
    * 判定链路：
-   *   1. pageText 长度 < 100 字符 → 跳过（0 分）
+   *   1. 文本长度 < 100 字符 → 跳过（0 分）
    *   2. 推广关键词匹配数 < 阈值（默认 1） → 跳过（0 分，非推广页面）
-   *   3. 计算 Emoji 密度 density = (emojiCount / pageText.length) * 1000
+   *   3. 计算 Emoji 密度 density = (emojiCount / textLength) * 1000
    *   4. 分段线性映射：
    *        density < 2.0          → 0 分
    *        2.0 ≤ density < 10.0   → (density - 2) / 8 * 30
    *        density ≥ 10.0          → 30 分（封顶）
    *
-   * @param {string} pageText - 页面文本内容
+   * @param {string} pageText - 页面文本内容（兼容旧消息）
+   * @param {Object} textSignals - 内容脚本本地计算的派生文本指标
    * @returns {Object} 包含 score, triggered, detail, detailCN, keywordMatchCount, emojiCount, density 的结果
    */
-  static _evaluateRule5EmojiDensity(pageText) {
+  static _evaluateRule5EmojiDensity(pageText, textSignals) {
     const result = {
       score: 0, triggered: false,
       detail: '', detailCN: 'Emoji密度: 正常',
       keywordMatchCount: 0, emojiCount: 0, density: 0
     };
+
+    if (textSignals && typeof textSignals === 'object') {
+      const textLength = Number(textSignals.textLength || 0);
+      if (textLength < EMOJI_MIN_TEXT_LENGTH) {
+        result.detail = `页面文本不足${EMOJI_MIN_TEXT_LENGTH}字符，跳过Emoji密度检测`;
+        result.detailCN = 'Emoji密度: 文本不足';
+        return result;
+      }
+
+      const keywordMatchCount = Number(textSignals.promoKeywordMatchCount || 0);
+      result.keywordMatchCount = keywordMatchCount;
+      if (keywordMatchCount < EMOJI_KEYWORD_MATCH_THRESHOLD) {
+        result.detail = `推广关键词匹配${keywordMatchCount}个，未达阈值${EMOJI_KEYWORD_MATCH_THRESHOLD}，跳过Emoji密度检测`;
+        result.detailCN = 'Emoji密度: 非推广页面';
+        return result;
+      }
+
+      const emojiCount = Number(textSignals.emojiCount || 0);
+      result.emojiCount = emojiCount;
+      if (emojiCount === 0) {
+        result.detail = `推广关键词匹配${keywordMatchCount}个，但无Emoji字符`;
+        result.detailCN = 'Emoji密度: 无Emoji';
+        return result;
+      }
+
+      const density = Number(textSignals.emojiDensity || 0);
+      result.density = Math.round(density * 100) / 100;
+      return this._finalizeEmojiDensityResult(result, keywordMatchCount, emojiCount, density);
+    }
 
     // 1. 文本长度不足 → 跳过
     if (!pageText || pageText.length < EMOJI_MIN_TEXT_LENGTH) {
@@ -705,11 +755,17 @@ export class ScoringEngine {
       return result;
     }
 
-    // density = (emojiCount / pageText.length) * 1000（单位：个/千字符）
+    // density = (emojiCount / textLength) * 1000（单位：个/千字符）
     const density = (emojiCount / pageText.length) * 1000;
     result.density = Math.round(density * 100) / 100;
 
-    // 4. 分段线性映射
+    return this._finalizeEmojiDensityResult(result, keywordMatchCount, emojiCount, density);
+  }
+
+  /**
+   * 根据 Emoji 密度完成分段线性映射和详情组装。
+   */
+  static _finalizeEmojiDensityResult(result, keywordMatchCount, emojiCount, density) {
     let emojiDensityScore = 0;
     if (density < EMOJI_DENSITY_THRESHOLD_LOW) {
       emojiDensityScore = 0;

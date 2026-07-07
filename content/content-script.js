@@ -17,7 +17,7 @@
  *      - DOM节点数、外部资源去重总数、框架标记（HTML全文+window全局变量双重检测）、文本长度
  *   3. 扫描 ICP 备案号 (findIcpStrings) — 规则三数据源
  *      - 6 层递进扫描：footer → ICP 元素 → 底部 30% 区域 → <a> 链接 → fixed 元素 → TreeWalker
- *   4. 响应来自 Service Worker 的 REQUEST_PAGE_TEXT 重采请求
+ *   4. 响应来自 Service Worker 的 REQUEST_PAGE_TEXT 重采请求（仅返回派生文本指标，不传正文）
  */
 
 (function () {
@@ -284,6 +284,59 @@
   }
 
   // ==================== 规则五：页面度量采集 ====================
+
+  function collectTextSignals() {
+    const bodyText = (document.body ? document.body.innerText : '') || '';
+    const textLength = bodyText.length;
+
+    // CJK 统计与 background/icp-utils.js 保持同一判定口径。
+    function isCJKChar(codePoint) {
+      return (codePoint >= 0x4E00 && codePoint <= 0x9FFF) ||
+        (codePoint >= 0x3400 && codePoint <= 0x4DBF) ||
+        (codePoint >= 0xF900 && codePoint <= 0xFAFF);
+    }
+
+    let cjkCount = 0;
+    for (let i = 0; i < textLength; i++) {
+      const cp = bodyText.codePointAt(i);
+      if (isCJKChar(cp)) cjkCount++;
+      if (cp > 0xFFFF) i++;
+    }
+    const cjkRatio = textLength > 0 ? cjkCount / textLength : 0;
+    const hasCJK = (cjkCount >= 30 && cjkRatio >= 0.08) || cjkCount >= 500;
+
+    const PROMO_KEYWORDS = [
+      '下载', '产品', '软件', '安装', '免费', '官方', '应用', '工具',
+      '版本', '最新', '破解', '注册', '激活', '绿色', '汉化', '插件',
+      '专业版', '正式版', '购买', '激活码', '注册机', '补丁', '试用',
+      '客户端', '安装包', '精简版', '去广告', '便携版',
+      'download', 'product', 'software', 'install', 'free', 'official',
+      'app', 'tool', 'version', 'latest', 'crack', 'register', 'activate',
+      'pro', 'premium', 'setup', 'license', 'keygen', 'patch', 'trial',
+      'portable', 'release', 'full version'
+    ];
+
+    const lowerText = bodyText.toLowerCase();
+    let promoKeywordMatchCount = 0;
+    for (const kw of PROMO_KEYWORDS) {
+      if (lowerText.includes(kw.toLowerCase())) promoKeywordMatchCount++;
+    }
+
+    const emojiRegex = /\p{Emoji_Presentation}|\p{Emoji}️/gu;
+    const emojiMatches = bodyText.match(emojiRegex) || [];
+    const emojiCount = emojiMatches.length;
+    const emojiDensity = textLength > 0 ? (emojiCount / textLength) * 1000 : 0;
+
+    return {
+      textLength,
+      cjkCount,
+      cjkRatio: Math.round(cjkRatio * 10000) / 10000,
+      hasCJK,
+      promoKeywordMatchCount,
+      emojiCount,
+      emojiDensity: Math.round(emojiDensity * 100) / 100
+    };
+  }
 
   function collectPageMetrics() {
     const html = document.documentElement.outerHTML || '';
@@ -598,11 +651,11 @@
     }
 
     var hasIcpGovLink = checkIcpGovLink();
+    var textSignals = safeCollect(collectTextSignals, null);
     var payload = {
       url: window.location.href, domain: window.location.hostname, title: document.title,
-      pageText: safeCollect(function() { return (document.body ? document.body.innerText : '').substring(0, 15000); }, ''),
       icpStrings: icpStrings, pageMetrics: pageMetrics, linkMetrics: linkMetrics,
-      hasIcpGovLink: hasIcpGovLink
+      hasIcpGovLink: hasIcpGovLink, textSignals: textSignals
     };
 
     // 二次扫描去重：与首次结果比对，无新增数据则跳过发送
@@ -650,7 +703,7 @@
             linkMetrics: linkMetrics,
             icpStrings: safeCollect(findIcpStrings, []),
             hasIcpGovLink: checkIcpGovLink(),
-            pageText: (document.body ? document.body.innerText : '').substring(0, 15000),
+            textSignals: safeCollect(collectTextSignals, null),
             title: document.title,
             url: window.location.href
           });

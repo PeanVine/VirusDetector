@@ -129,7 +129,7 @@ function createTabState() {
       ageBonus: { score: 0, triggered: false, detailCN: '待检测' },
       downloadLink: { score: 0, triggered: false, detailCN: '待检测' }
     },
-    pageText: '', icpStrings: [], pageMetrics: null, linkMetrics: null,
+    icpStrings: [], textSignals: null, pageMetrics: null, linkMetrics: null,
     downloadState: { hasDownloadedArchive: false, archiveFileName: null },
     lastAnalyzed: 0
   };
@@ -145,7 +145,9 @@ async function loadTabState(tabId) {
 
 async function saveTabState(tabId, s) {
   try {
-    await chrome.storage.local.set({ [STORAGE_KEYS.TAB_STATE_PREFIX + tabId]: s });
+    const sanitizedState = { ...s };
+    delete sanitizedState.pageText; // 不持久化页面正文，仅保留派生指标 textSignals
+    await chrome.storage.local.set({ [STORAGE_KEYS.TAB_STATE_PREFIX + tabId]: sanitizedState });
   } catch (e) { /* ignore */ }
 }
 
@@ -699,8 +701,8 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
   const ctx = {
     url: tabState.url || url,
     domain: tabState.domain || domain,
-    pageText: tabState.pageText || '',
     icpStrings: tabState.icpStrings || [],
+    textSignals: tabState.textSignals || null,
     hasIcpGovLink: tabState.hasIcpGovLink || false,
     linkMetrics: linkMetrics || tabState.linkMetrics || null,
     downloadState: tabState.downloadState || { hasDownloadedArchive: false },
@@ -987,7 +989,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'PAGE_ANALYSIS_RESULT': {
       const tabId = sender.tab ? sender.tab.id : null;
       if (!tabId) { sendResponse({ received: false }); return false; }
-      const { url, domain, pageText, icpStrings, pageMetrics, linkMetrics, hasIcpGovLink } = message.payload;
+      const { url, domain, icpStrings, textSignals, pageMetrics, linkMetrics, hasIcpGovLink } = message.payload;
 
       // 竞态条件防护：校验 content script 所在标签页的当前 URL 是否与采集数据的域名一致
       // 若用户已导航到其他页面，则丢弃此消息（旧页面的数据不应污染新页面的检测结果）
@@ -1007,8 +1009,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
 
       loadTabState(tabId).then(async (ts) => {
-        ts.pageText = pageText || '';
         ts.icpStrings = icpStrings || [];
+        ts.textSignals = textSignals || null;
         ts.hasIcpGovLink = !!hasIcpGovLink;
         ts.url = url || ts.url;
         ts.domain = domain || ts.domain;
