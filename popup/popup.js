@@ -172,10 +172,10 @@
 
   function updateWhitelistButton(isWhitelisted) {
     if (isWhitelisted) {
-      els.whitelistBtn.innerHTML = ICONS.starOff + '移出白名单';
+      els.whitelistBtn.innerHTML = ICONS.starOff + '<span class="btn-label">移出白名单</span>';
       els.whitelistBtn.classList.add('active');
     } else {
-      els.whitelistBtn.innerHTML = ICONS.star + '加入白名单';
+      els.whitelistBtn.innerHTML = ICONS.star + '<span class="btn-label">加入白名单</span>';
       els.whitelistBtn.classList.remove('active');
     }
   }
@@ -375,13 +375,29 @@
 
   els.refreshBtn.addEventListener('click', async () => {
     showLoading();
-    els.refreshBtn.innerHTML = ICONS.pending + '检测中...';
+    els.refreshBtn.innerHTML = ICONS.pending + '<span class="btn-label">检测中...</span>';
     els.refreshBtn.disabled = true;
     await requestReanalysis();
     await render();
-    els.refreshBtn.innerHTML = ICONS.refresh + '重新检测';
+    els.refreshBtn.innerHTML = ICONS.refresh + '<span class="btn-label">重新检测</span>';
     els.refreshBtn.disabled = false;
   });
+
+  // 检测详情折叠/展开
+  const detailsToggle = document.getElementById('details-toggle');
+  if (detailsToggle) {
+    detailsToggle.addEventListener('click', () => {
+      els.detailsSection.classList.toggle('expanded');
+    });
+  }
+
+  // GitHub 按钮
+  const githubBtn = document.getElementById('github-btn');
+  if (githubBtn) {
+    githubBtn.addEventListener('click', () => {
+      chrome.tabs.create({ url: 'https://github.com/Lolitide/VirusDetector' });
+    });
+  }
 
   // 上报按钮：误报
   const reportFalseBtn = document.getElementById('report-false-btn');
@@ -390,7 +406,7 @@
   if (reportFalseBtn) {
     reportFalseBtn.addEventListener('click', async () => {
       reportFalseBtn.disabled = true;
-      reportFalseBtn.textContent = '上报中...';
+      reportFalseBtn.querySelector('.btn-label').textContent = '上报中...';
       try {
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tabs.length === 0) return;
@@ -404,16 +420,35 @@
         await render();
       } catch (e) {
         console.error('[Popup] 误报上报失败:', e);
-        reportFalseBtn.textContent = '误报';
+        reportFalseBtn.querySelector('.btn-label').textContent = '误报';
         reportFalseBtn.disabled = false;
       }
     });
   }
 
+  let pendingConfirm = false;
+  let confirmTimer = null;
+
   if (reportPhishBtn) {
     reportPhishBtn.addEventListener('click', async () => {
+      if (!pendingConfirm) {
+        // 第一次点击 — 进入确认状态
+        pendingConfirm = true;
+        reportPhishBtn.querySelector('.btn-label').textContent = '确定上报？';
+        reportPhishBtn.style.color = '#FF6E6E';
+        reportPhishBtn.style.borderColor = '#FF6E6E';
+        confirmTimer = setTimeout(() => {
+          resetConfirmState();
+        }, 3000);
+        return;
+      }
+
+      // 第二次点击 — 真正上报
+      clearTimeout(confirmTimer);
+      pendingConfirm = false;
+      resetConfirmState();
       reportPhishBtn.disabled = true;
-      reportPhishBtn.textContent = '上报中...';
+      reportPhishBtn.querySelector('.btn-label').textContent = '上报中...';
       try {
         const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tabs.length === 0) return;
@@ -422,16 +457,34 @@
           type: 'SUBMIT_REPORT',
           payload: { reportType: 'confirmed_phish', domain, note: '' }
         });
-        reportPhishBtn.textContent = '已上报';
+        reportPhishBtn.querySelector('.btn-label').textContent = '已上报';
         // 刷新面板
         await new Promise(r => setTimeout(r, 400));
         await render();
       } catch (e) {
         console.error('[Popup] 钓鱼确认上报失败:', e);
-        reportPhishBtn.textContent = '确认钓鱼';
+        reportPhishBtn.querySelector('.btn-label').textContent = '确认钓鱼';
         reportPhishBtn.disabled = false;
       }
     });
+
+    // 点击按钮以外区域取消确认
+    document.addEventListener('click', (e) => {
+      if (pendingConfirm && !reportPhishBtn.contains(e.target)) {
+        clearTimeout(confirmTimer);
+        resetConfirmState();
+      }
+    });
+  }
+
+  function resetConfirmState() {
+    pendingConfirm = false;
+    if (confirmTimer) { clearTimeout(confirmTimer); confirmTimer = null; }
+    if (reportPhishBtn) {
+      reportPhishBtn.querySelector('.btn-label').textContent = '确认钓鱼';
+      reportPhishBtn.style.color = '';
+      reportPhishBtn.style.borderColor = '';
+    }
   }
 
   // 白名单按钮
