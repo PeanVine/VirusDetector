@@ -41,7 +41,7 @@ import {
  *  - 没有可分析的主机名（hostname 为 ""）
  *  - 历史上所有 file:// 页面共享同一个空字符串缓存键 `domain_cache_`，
  *    一次恶意缓存会污染所有本地文件
- *  - Content Script 在 `<all_urls>` 下也会运行于 file:// 页面并发送数据
+ *  - 旧版本 Content Script 曾在所有协议页面运行，并会从 file:// 页面发送数据
  *
  * @param {string} url
  * @returns {boolean} true 表示应跳过（不分析）

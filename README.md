@@ -366,7 +366,7 @@ score = floor(60 / (1 + (x / (60 × b))^a))
 | `alarms` | 定时任务支持 |
 | `notifications` | 桌面风险通知 |
 | `webNavigation` | 监听页面导航以触发分析 |
-| `<all_urls>` | 全部网站覆盖（检测与注入所需） |
+| `http://*/*`, `https://*/*` | 仅覆盖 HTTP/HTTPS 网站，避免在 `file://`、`data:`、`ftp:`、浏览器内部页面等非网页协议上运行 |
 
 ---
 
