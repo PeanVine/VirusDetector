@@ -551,6 +551,16 @@ body {
   cursor: not-allowed;
 }
 
+.report-btn:hover {
+  border-color: var(--orange);
+  color: var(--orange);
+}
+
+.danger-btn:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
 .footer-version {
   font-size: 11px;
   color: var(--text3);

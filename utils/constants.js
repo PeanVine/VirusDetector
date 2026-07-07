@@ -9,7 +9,7 @@
 
 // ==================== 版本号（统一入口） ====================
 /** 当前扩展版本号，所有模块引用此常量，发版时仅需修改此处 + manifest.json + README */
-export const VERSION = '2.4.1';
+export const VERSION = '2.4.2';
 
 // ==================== 评分体系 ====================
 /** 触发警告的总分阈值（注入拦截 + 警告窗口 + 图标变红） */
@@ -49,6 +49,12 @@ export const SCORE_RULE_2_PER_HIGH_RISK = 10;
 
 /** 单个中危压缩包链接（跨域+无下载关键词）基础得分 */
 export const SCORE_RULE_2_PER_LOW_RISK = 5;
+
+/** 单个可信平台压缩包链接（跨域+指向GitHub等知名平台）降权得分 */
+export const SCORE_RULE_2_TRUSTED_PLATFORM = 3;
+
+/** 官网下载链接劫持检测：仿冒站上的下载链接指向非官方域名，额外加分 */
+export const SCORE_RULE_2_HIJACK = 30;
 
 /** 批量分发阈值：压缩包链接数 >= 此值时触发批量加权 */
 export const SCORE_RULE_2_BATCH_THRESHOLD = 3;
@@ -182,7 +188,8 @@ export const MSG_TYPES = {
   CHECK_WHITELIST: 'CHECK_WHITELIST',
   DOWNLOAD_CONFIRMATION: 'DOWNLOAD_CONFIRMATION',
   GET_DOWNLOAD_BLACKLIST: 'GET_DOWNLOAD_BLACKLIST',
-  REMOVE_DOWNLOAD_BLACKLIST: 'REMOVE_DOWNLOAD_BLACKLIST'
+  REMOVE_DOWNLOAD_BLACKLIST: 'REMOVE_DOWNLOAD_BLACKLIST',
+  SUBMIT_REPORT: 'SUBMIT_REPORT'
 };
 
 // ==================== 存储键 ====================
@@ -193,11 +200,16 @@ export const STORAGE_KEYS = {
   GLOBAL_SETTINGS: 'global_settings',
   WHITELIST: 'whitelist',
   DOWNLOAD_BLACKLIST: 'download_blacklist',
-  PENDING_DOWNLOADS: 'pending_downloads'
+  PENDING_DOWNLOADS: 'pending_downloads',
+  USER_REPORTS: 'user_reports'
 };
 
 // 缓存有效期（毫秒）
 export const CACHE_TTL = 24 * 60 * 60 * 1000;  // 24小时
+
+// ==================== 用户上报 → GitHub Issue ====================
+/** Cloudflare Worker 上报代理 URL（部署后替换为实际 URL） */
+export const REPORT_API_URL = 'https://virus-detector-report.lolitide.workers.dev/api/report';
 
 // ==================== RDAP / Whois API 配置 ====================
 /** RDAP IANA 引导文件 URL（TLD → RDAP 服务器映射） */

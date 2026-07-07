@@ -383,6 +383,57 @@
     els.refreshBtn.disabled = false;
   });
 
+  // 上报按钮：误报
+  const reportFalseBtn = document.getElementById('report-false-btn');
+  const reportPhishBtn = document.getElementById('report-phish-btn');
+
+  if (reportFalseBtn) {
+    reportFalseBtn.addEventListener('click', async () => {
+      reportFalseBtn.disabled = true;
+      reportFalseBtn.textContent = '上报中...';
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs.length === 0) return;
+        const domain = new URL(tabs[0].url || '').hostname;
+        await chrome.runtime.sendMessage({
+          type: 'SUBMIT_REPORT',
+          payload: { reportType: 'false_positive', domain, note: '' }
+        });
+        // 刷新面板显示白名单状态
+        await new Promise(r => setTimeout(r, 400));
+        await render();
+      } catch (e) {
+        console.error('[Popup] 误报上报失败:', e);
+        reportFalseBtn.textContent = '误报';
+        reportFalseBtn.disabled = false;
+      }
+    });
+  }
+
+  if (reportPhishBtn) {
+    reportPhishBtn.addEventListener('click', async () => {
+      reportPhishBtn.disabled = true;
+      reportPhishBtn.textContent = '上报中...';
+      try {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs.length === 0) return;
+        const domain = new URL(tabs[0].url || '').hostname;
+        await chrome.runtime.sendMessage({
+          type: 'SUBMIT_REPORT',
+          payload: { reportType: 'confirmed_phish', domain, note: '' }
+        });
+        reportPhishBtn.textContent = '已上报';
+        // 刷新面板
+        await new Promise(r => setTimeout(r, 400));
+        await render();
+      } catch (e) {
+        console.error('[Popup] 钓鱼确认上报失败:', e);
+        reportPhishBtn.textContent = '确认钓鱼';
+        reportPhishBtn.disabled = false;
+      }
+    });
+  }
+
   // 白名单按钮
   els.whitelistBtn.addEventListener('click', async () => {
     showLoading();

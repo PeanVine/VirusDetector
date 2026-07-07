@@ -35,6 +35,7 @@ import { WhoisClient } from './whois-client.js';
 import { DownloadBlacklist } from './download-blacklist.js';
 import { UrlUtils } from '../utils/url-utils.js';
 import { TrustedPlatforms } from '../utils/trusted-platforms.js';
+import { TrustedDownloadHosts } from '../utils/trusted-download-hosts.js';
 import {
   SCORE_THRESHOLD, SCORE_RULE_1, SCORE_RULE_2_HIGH, SCORE_RULE_2_LOW,
   SCORE_RULE_3, SCORE_RULE_3_FAKE, SCORE_RULE_5, SCORE_RULE_5_PARTIAL, RISK_LEVEL,
@@ -43,6 +44,7 @@ import {
   SCORE_RULE_4B_DOWNLOAD_BTN, SCORE_RULE_4B_FILE_LINK, SCORE_RULE_4B_ARCHIVE_LINK,
   RULE_2_DOMAIN_SUSPICION_THRESHOLD,
   SCORE_RULE_2_PROACTIVE_MAX, SCORE_RULE_2_PER_HIGH_RISK, SCORE_RULE_2_PER_LOW_RISK,
+  SCORE_RULE_2_TRUSTED_PLATFORM, SCORE_RULE_2_HIJACK,
   SCORE_RULE_2_BATCH_THRESHOLD, SCORE_RULE_2_BATCH_MULTIPLIER,
   SCORE_RULE_2_SUSPICION_MULTIPLIER,
   ARCHIVE_EXTENSIONS, AI_PAGE_THRESHOLDS, SAME_PAGE_LINK_THRESHOLD,
@@ -109,7 +111,7 @@ export class ScoringEngine {
         fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false
       };
     } else {
-      result2 = await this._evaluateRule2(downloadState, linkMetrics, existingScore);
+      result2 = await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry);
     }
 
     // 域名年龄评分（Whois API）：非官方域名时调用，基于注册天数 S 型衰减计分
@@ -144,6 +146,253 @@ export class ScoringEngine {
       correctUrl: result1.correctUrl || null,
       officialName: result1.officialName || null,
       timestamp: Date.now()
+    };
+  }
+
+  /**
+   * 同步评估（不含 Whois 查询）：规则一~五。
+   * 用于快速首屏响应（目标 < 500ms），Whois 结果通过 evaluateDomainAgePart 异步补充。
+   *
+   * @param {Object} ctx - 页面上下文（与 evaluate() 相同）
+   * @returns {Object} { totalScore, isSuspicious, riskLevel, breakdown, matchedEntry, correctUrl, officialName,
+   *                     isConfirmedOfficial, preliminaryScore, domainAgeResult, timestamp }
+   */
+  static async evaluateSync(ctx) {
+    const {
+      url, domain, pageText, icpStrings, hasIcpGovLink,
+      linkMetrics, downloadState, pageMetrics
+    } = ctx;
+
+    // 规则一：域名仿冒检测
+    const result1 = this._evaluateRule1(domain);
+    const existingScore = result1.score;
+
+    // 规则三：ICP检测
+    const result3 = this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink);
+
+    // 官方站点早期退出
+    const isConfirmedOfficial = (
+      !result1.triggered && !result3.triggered &&
+      result1.status === 'pass' && result3.status === 'pass'
+    );
+
+    let result4, result5;
+    if (isConfirmedOfficial) {
+      result4 = {
+        score: 0, triggered: false, status: 'pass',
+        detail: '官方网站，跳过链接分析',
+        detailCN: '链接分析: 官方网站'
+      };
+      result5 = {
+        score: 0, triggered: false, status: 'pass',
+        detail: '官方网站，跳过代码工程化检查',
+        detailCN: '代码工程化: 官方网站'
+      };
+    } else {
+      result4 = this._evaluateRule4(linkMetrics, domain);
+      result5 = this._evaluateRule5(pageMetrics, domain, pageText);
+    }
+
+    // 规则二：Phase A 主动扫描 + Phase B 被动检测
+    let result2;
+    if (isConfirmedOfficial) {
+      result2 = {
+        score: 0, triggered: false, status: 'pass',
+        detail: '官方网站，跳过下载检测',
+        detailCN: '下载检测: 官方网站',
+        fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false
+      };
+    } else {
+      result2 = await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry);
+    }
+
+    // 域名年龄：从缓存读取（不发起网络请求），供异步阶段复用
+    const domainAgeResultCached = WhoisClient.getCached(domain);
+
+    // 初步总分（不含域名年龄加减分）
+    const preliminaryScore = result1.score + result2.score + result3.score +
+      result4.score + result5.score;
+
+    // 基于缓存快速计算（如果缓存命中）
+    let domainAgeResult = { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名年龄: 等待查询', creationDays: -1 };
+    let ageBonusResult = { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名减分: 等待查询', bonusScore: 0 };
+
+    if (!isConfirmedOfficial && domainAgeResultCached && domainAgeResultCached.creationDays >= 0) {
+      // 缓存命中：同步计算域名年龄评分
+      const x = domainAgeResultCached.creationDays;
+      const denominator = 1 + Math.pow(x / (60 * DOMAIN_AGE_DECAY_B), DOMAIN_AGE_DECAY_A);
+      const rawScore = SCORE_DOMAIN_AGE_MAX / denominator;
+      const score = Math.floor(rawScore);
+      if (score > 0) {
+        domainAgeResult = {
+          score, triggered: true, status: 'pass',
+          detail: `域名注册仅${x}天（Whois缓存），可疑加分+${score}`,
+          detailCN: `域名年龄: 注册仅${x}天，可疑 +${score}`,
+          creationDays: x
+        };
+      } else {
+        domainAgeResult = {
+          score: 0, triggered: false, status: 'pass',
+          detail: `域名注册${x}天（Whois缓存），年龄正常`,
+          detailCN: `域名年龄: 已注册${x}天`,
+          creationDays: x
+        };
+      }
+
+      // 缓存命中时可同步计算减分
+      if (preliminaryScore + domainAgeResult.score >= DOMAIN_AGE_BONUS_SCORE_THRESHOLD) {
+        const creationDays = x;
+        let bonusScore = 0;
+        if (creationDays < DOMAIN_AGE_BONUS_MIN_DAYS) {
+          bonusScore = 0;
+        } else if (creationDays < DOMAIN_AGE_BONUS_MAX_DAYS) {
+          bonusScore = Math.floor(
+            SCORE_DOMAIN_AGE_BONUS_MAX * (creationDays - DOMAIN_AGE_BONUS_MIN_DAYS) /
+            (DOMAIN_AGE_BONUS_MAX_DAYS - DOMAIN_AGE_BONUS_MIN_DAYS)
+          );
+        } else {
+          bonusScore = SCORE_DOMAIN_AGE_BONUS_MAX;
+        }
+        if (bonusScore > 0) {
+          const effectiveBonus = Math.min(bonusScore, preliminaryScore + domainAgeResult.score);
+          ageBonusResult = {
+            score: -effectiveBonus, triggered: true, status: 'pass',
+            detail: `域名注册${creationDays}天，年龄减分-${effectiveBonus}`,
+            detailCN: `域名减分: 已注册${creationDays}天，年龄抵消 -${effectiveBonus}`,
+            bonusScore: effectiveBonus
+          };
+        }
+      }
+    }
+
+    // 最终总分（缓存命中时已含域名年龄，缓存未命中时仅含规则一~五）
+    const totalScore = preliminaryScore + domainAgeResult.score + ageBonusResult.score;
+    const isSuspicious = totalScore >= SCORE_THRESHOLD;
+
+    return {
+      totalScore,
+      isSuspicious,
+      riskLevel: isSuspicious ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE,
+      breakdown: {
+        rule1: result1, rule2: result2, rule3: result3, rule4: result4, rule5: result5,
+        domainAge: domainAgeResult, ageBonus: ageBonusResult
+      },
+      matchedEntry: result1.matchedEntry || null,
+      correctUrl: result1.correctUrl || null,
+      officialName: result1.officialName || null,
+      // 供异步阶段使用
+      isConfirmedOfficial,
+      preliminaryScore: preliminaryScore + domainAgeResult.score,  // 含缓存域名年龄
+      _syncDomainAgeResult: domainAgeResult,
+      timestamp: Date.now()
+    };
+  }
+
+  /**
+   * 异步补充 Whois 域名年龄评分（不阻塞主流程）。
+   * 在 evaluateSync() 之后调用，发起实际网络请求获取域名注册信息。
+   *
+   * @param {string} domain - 页面域名
+   * @param {number} preliminaryScore - evaluateSync 返回的初步总分（含缓存域名年龄）
+   * @param {Object} syncDomainAgeResult - evaluateSync 返回的 _syncDomainAgeResult
+   * @param {boolean} isConfirmedOfficial - 是否为官方站点
+   * @returns {Promise<Object>} { domainAgeResult, ageBonusResult, totalScore, isSuspicious, riskLevel }
+   */
+  static async evaluateDomainAgePart(domain, preliminaryScore, syncDomainAgeResult, isConfirmedOfficial) {
+    let domainAgeResult = syncDomainAgeResult || { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名年龄: 未检测', creationDays: -1 };
+    let ageBonusResult = { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名减分: 未应用', bonusScore: 0 };
+
+    if (isConfirmedOfficial) {
+      return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: false, riskLevel: RISK_LEVEL.SAFE };
+    }
+
+    // 缓存未命中 → 发起 Whois 查询
+    if (syncDomainAgeResult.creationDays < 0) {
+      const whoisResult = await WhoisClient.lookup(domain);
+
+      if (!whoisResult) {
+        const errInfo = WhoisClient.lastError;
+        const errPhase = errInfo ? ` [${errInfo.phase}]` : '';
+        const errMsg = errInfo ? `: ${errInfo.message}` : '';
+        domainAgeResult = {
+          score: 0, triggered: false, status: 'neutral',
+          detail: `Whois API 查询失败${errPhase}${errMsg} (${domain})`,
+          detailCN: `域名年龄: API 查询失败${errPhase}`,
+          creationDays: -1
+        };
+        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= SCORE_THRESHOLD, riskLevel: preliminaryScore >= SCORE_THRESHOLD ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
+      }
+
+      if (whoisResult.creationDays < 0) {
+        domainAgeResult = {
+          score: 0, triggered: false, status: 'neutral',
+          detail: `Whois API 返回的域名注册天数未知 (${domain})`,
+          detailCN: '域名年龄: 注册时间未知',
+          creationDays: -1
+        };
+        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= SCORE_THRESHOLD, riskLevel: preliminaryScore >= SCORE_THRESHOLD ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
+      }
+
+      const x = whoisResult.creationDays;
+      const denominator = 1 + Math.pow(x / (60 * DOMAIN_AGE_DECAY_B), DOMAIN_AGE_DECAY_A);
+      const rawScore = SCORE_DOMAIN_AGE_MAX / denominator;
+      const score = Math.floor(rawScore);
+
+      if (score > 0) {
+        domainAgeResult = {
+          score, triggered: true, status: 'pass',
+          detail: `域名注册仅${x}天（Whois），可疑加分+${score}（raw=${rawScore.toFixed(2)}）`,
+          detailCN: `域名年龄: 注册仅${x}天，可疑 +${score}`,
+          creationDays: x
+        };
+      } else {
+        domainAgeResult = {
+          score: 0, triggered: false, status: 'pass',
+          detail: `域名注册${x}天（Whois），年龄正常`,
+          detailCN: `域名年龄: 已注册${x}天`,
+          creationDays: x
+        };
+      }
+    }
+
+    // 计算新的初步总分（含域名年龄加分）
+    const newPreliminaryScore = preliminaryScore - (syncDomainAgeResult.score || 0) + domainAgeResult.score;
+
+    // 域名年龄减分
+    if (newPreliminaryScore >= DOMAIN_AGE_BONUS_SCORE_THRESHOLD && domainAgeResult.creationDays >= 0) {
+      const creationDays = domainAgeResult.creationDays;
+      let bonusScore = 0;
+      if (creationDays < DOMAIN_AGE_BONUS_MIN_DAYS) {
+        bonusScore = 0;
+      } else if (creationDays < DOMAIN_AGE_BONUS_MAX_DAYS) {
+        bonusScore = Math.floor(
+          SCORE_DOMAIN_AGE_BONUS_MAX * (creationDays - DOMAIN_AGE_BONUS_MIN_DAYS) /
+          (DOMAIN_AGE_BONUS_MAX_DAYS - DOMAIN_AGE_BONUS_MIN_DAYS)
+        );
+      } else {
+        bonusScore = SCORE_DOMAIN_AGE_BONUS_MAX;
+      }
+
+      if (bonusScore > 0) {
+        const effectiveBonus = Math.min(bonusScore, newPreliminaryScore);
+        ageBonusResult = {
+          score: -effectiveBonus, triggered: true, status: 'pass',
+          detail: `域名注册${creationDays}天，年龄减分-${effectiveBonus}（原始bonus=${bonusScore}，减分前=${newPreliminaryScore}）`,
+          detailCN: `域名减分: 已注册${creationDays}天，年龄抵消 -${effectiveBonus}`,
+          bonusScore: effectiveBonus
+        };
+      }
+    }
+
+    const totalScore = newPreliminaryScore + ageBonusResult.score;
+    const isSuspicious = totalScore >= SCORE_THRESHOLD;
+
+    return {
+      domainAgeResult,
+      ageBonusResult,
+      totalScore,
+      isSuspicious,
+      riskLevel: isSuspicious ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE
     };
   }
 
@@ -214,7 +463,7 @@ export class ScoringEngine {
    * @param {number} existingSuspicionScore - 其他规则已累计的分数
    * @returns {Promise<Object>} 评分结果
    */
-  static async _evaluateRule2(downloadState, linkMetrics, existingSuspicionScore) {
+  static async _evaluateRule2(downloadState, linkMetrics, existingSuspicionScore, matchedEntry) {
     const result = {
       score: 0, triggered: false, status: 'pass',
       detail: '', detailCN: '下载检测: 未检测到压缩包',
@@ -235,9 +484,52 @@ export class ScoringEngine {
       const crossDomainLinks = archiveLinks.filter(l => l.isCrossDomain);
 
       if (crossDomainLinks.length > 0) {
-        // 2. 对每个跨域压缩包链接分类计分
+        // 2. 对每个跨域压缩包链接分类计分（含黑名单+可信平台+劫持检测）
         let baseScore = 0;
+        let blacklistBonus = 0;
+        let blacklistHits = 0;
+        let trustedPlatformCount = 0;
+        let hijackCount = 0;
+
+        // 劫持检测前置准备：如果规则一已识别出仿冒目标，收集其官方域名集合
+        const officialDomainSet = (matchedEntry && matchedEntry.officialDomains)
+          ? new Set(matchedEntry.officialDomains.map(d => d.toLowerCase())) : null;
+
         for (const link of crossDomainLinks) {
+          let downloadDomain;
+          try {
+            downloadDomain = new URL(link.href, 'http://placeholder').hostname;
+          } catch (e) { continue; }
+
+          // 优先级1：黑名单检查（最高优先级，不可绕过）
+          if (await DownloadBlacklist.isBlacklisted(downloadDomain)) {
+            blacklistBonus += SCORE_RULE_2_PER_HIGH_RISK;
+            blacklistHits++;
+            continue;
+          }
+
+          // 优先级2：可信下载平台 → 降权
+          if (TrustedDownloadHosts.isTrusted(downloadDomain)) {
+            baseScore += SCORE_RULE_2_TRUSTED_PLATFORM;  // +3
+            trustedPlatformCount++;
+            continue;
+          }
+
+          // 优先级3：官网下载链接劫持检测
+          // 条件：规则一已命中仿冒 且 下载链接域名不在被仿冒品牌的官方域名列表中
+          if (officialDomainSet) {
+            try {
+              const dlMainDomain = UrlUtils.getMainDomain(downloadDomain);
+              if (!officialDomainSet.has(dlMainDomain) &&
+                  ![...officialDomainSet].some(od => downloadDomain.endsWith('.' + od))) {
+                hijackCount++;
+                // 劫持链接不参与常规分类计分，单独计入劫持加分（下方统一处理）
+                continue;
+              }
+            } catch (e) { /* 域名提取失败，走常规分类 */ }
+          }
+
+          // 优先级4：常规分类
           if (link.hasDownloadKW) {
             baseScore += SCORE_RULE_2_PER_HIGH_RISK;  // 🔴 高危：跨域+下载关键词
           } else {
@@ -245,37 +537,30 @@ export class ScoringEngine {
           }
         }
 
-        // 3. 批量加权：≥阈值时基础分翻倍（钓鱼站典型特征：页面塞满下载链接）
+        // 官网劫持加分：每个非官方下载链接 +30（硬上限 60），不参与批量/嫌疑加权
+        let hijackScore = 0;
+        if (hijackCount > 0) {
+          hijackScore = Math.min(hijackCount * SCORE_RULE_2_HIJACK, 60);
+        }
+
+        // 3. 批量加权：≥阈值时基础分翻倍（仅 baseScore 参与，hijackScore/blacklistBonus 独立）
         if (crossDomainLinks.length >= SCORE_RULE_2_BATCH_THRESHOLD) {
           baseScore = Math.floor(baseScore * SCORE_RULE_2_BATCH_MULTIPLIER);
         }
 
-        // 4. 域名嫌疑加权：其他规则已有 ≥30 分时乘 1.5
+        // 4. 域名嫌疑加权：其他规则已有 ≥30 分时乘 1.5（仅作用于 baseScore）
         if (existingSuspicionScore >= RULE_2_DOMAIN_SUSPICION_THRESHOLD) {
           baseScore = Math.floor(baseScore * SCORE_RULE_2_SUSPICION_MULTIPLIER);
         }
 
-        // 5. 检测黑名单命中（每个黑名单链接额外加分）
-        let blacklistBonus = 0;
-        let blacklistHits = 0;
-        for (const link of crossDomainLinks) {
-          let downloadDomain;
-          try {
-            downloadDomain = new URL(link.href, 'http://placeholder').hostname;
-          } catch (e) { continue; }
-          if (await DownloadBlacklist.isBlacklisted(downloadDomain)) {
-            blacklistBonus += SCORE_RULE_2_PER_HIGH_RISK;
-            blacklistHits++;
-          }
-        }
+        // 5. Phase A 总分 = baseScore(上限30) + blacklistBonus + hijackScore
+        const proactiveScore = Math.min(baseScore, SCORE_RULE_2_PROACTIVE_MAX);
+        const totalProactiveScore = proactiveScore + blacklistBonus + hijackScore;
 
-        // 6. 硬上限 30（Phase A 主动得分上限）
-        const proactiveScore = Math.min(baseScore + blacklistBonus, SCORE_RULE_2_PROACTIVE_MAX);
-
-        if (proactiveScore > 0) {
-          result.proactiveScore = proactiveScore;
+        if (totalProactiveScore > 0) {
+          result.proactiveScore = totalProactiveScore;
           result.proactiveHits = crossDomainLinks.length;
-          result.score = proactiveScore;
+          result.score = totalProactiveScore;
           result.triggered = true;
 
           const detailParts = [];
@@ -289,12 +574,21 @@ export class ScoringEngine {
           if (blacklistHits > 0) {
             detailParts.push(blacklistHits + '个命中下载黑名单');
           }
-          result.detail = '页面存在压缩包下载链接: ' + detailParts.join('; ') + ' (+' + proactiveScore + ')';
+          if (trustedPlatformCount > 0) {
+            detailParts.push(trustedPlatformCount + '个指向可信平台（降权）');
+          }
+          if (hijackCount > 0) {
+            detailParts.push(hijackCount + '个链接疑似劫持（指向非官方域名）');
+          }
+          result.detail = '页面存在压缩包下载链接: ' + detailParts.join('; ') + ' (+' + totalProactiveScore + ')';
           result.detailCN = '下载检测: 页面有' + crossDomainLinks.length + '个跨域压缩包链接';
           if (blacklistHits > 0) {
             result.detailCN += '（' + blacklistHits + '个命中黑名单）';
           }
-          result.detailCN += ' +' + proactiveScore;
+          if (hijackCount > 0) {
+            result.detailCN += '（' + hijackCount + '个疑似劫持）';
+          }
+          result.detailCN += ' +' + totalProactiveScore;
         }
       }
     }
@@ -466,19 +760,22 @@ export class ScoringEngine {
       partAReasons.push(linkMetrics.deadLinks + '个死链/不存在子页面');
     }
 
-    // Part A-③：≥4个不同元素指向同一个链接
+    // Part A-③：非线性计分 — 重复元素越多，得分对数增长（3个起计，30分封顶）
+    //           score = min(30, 8 * log2(n))，其中 n = 指向同一链接的不同元素数
     if (linkMetrics.hasDuplicateLinks && linkMetrics.duplicateLinks) {
       for (const dup of linkMetrics.duplicateLinks) {
-        if (dup.elementCount >= DUPLICATE_LINK_THRESHOLD) {
-          partAScore += SCORE_RULE_4A_DUPLICATE_LINK;
-          partAReasons.push(dup.elementCount + '个不同元素指向同一链接');
+        const n = dup.elementCount;
+        if (n >= 3) {
+          const dupScore = Math.floor(Math.min(30, 8 * Math.log2(n)));
+          partAScore += dupScore;
+          partAReasons.push(n + '个不同元素指向同一链接');
           // 附加分：该链接为下载链接
           if (dup.isDownloadLink) {
             partAScore += SCORE_RULE_4A_DOWNLOAD_LINK_BONUS;
             partAReasons.push('该重复链接为下载链接');
           }
-          break; // 只计一次（取第一个满足条件的）
         }
+        break; // 只计一次（取第一个满足条件的）
       }
     }
 
@@ -923,15 +1220,27 @@ export class ScoringEngine {
       return result;
     }
 
-    // 跨域 → 基础加分（黑名单域名直接给更高分）
+    // 跨域 → 基础加分（黑名单域名直接给更高分，可信平台降权）
     const isBlacklisted = await DownloadBlacklist.isBlacklisted(downloadDomain);
-    const baseScore = isBlacklisted ? SCORE_DOWNLOAD_BLACKLIST : 10;  // 黑名单20，常规10
+    const isTrustedPlatform = TrustedDownloadHosts.isTrusted(downloadDomain);
+
+    let baseScore;
+    if (isBlacklisted) {
+      baseScore = SCORE_DOWNLOAD_BLACKLIST;  // 黑名单20
+    } else if (isTrustedPlatform) {
+      baseScore = SCORE_RULE_2_TRUSTED_PLATFORM;  // 可信平台3
+    } else {
+      baseScore = 10;  // 常规跨域10
+    }
     result.score = baseScore;
     result.triggered = true;
 
     if (isBlacklisted) {
       result.detail = `下载链接指向黑名单域名 (${downloadDomain} ≠ ${pageDomain})，+${baseScore}`;
       result.detailCN = `下载链接: 跨域下载 → 黑名单域名 (${downloadDomain}) +${baseScore}`;
+    } else if (isTrustedPlatform) {
+      result.detail = `下载链接指向可信平台 (${downloadDomain} ≠ ${pageDomain})，降权+${baseScore}`;
+      result.detailCN = `下载链接: 跨域下载 → 可信平台 (${downloadDomain}) +${baseScore}`;
     } else {
       result.detail = `下载链接跨域 (${downloadDomain} ≠ ${pageDomain})，+${baseScore}`;
       result.detailCN = `下载链接: 跨域下载 (${downloadDomain}) +${baseScore}`;

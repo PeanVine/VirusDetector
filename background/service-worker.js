@@ -29,7 +29,7 @@ import { UrlUtils } from '../utils/url-utils.js';
 import {
   SCORE_THRESHOLD, DOWNLOAD_CONFIRM_THRESHOLD, RISK_LEVEL, MSG_TYPES,
   STORAGE_KEYS, CACHE_TTL, DETECT_NON_ARCHIVE_FILES_DEFAULT,
-  VERSION
+  VERSION, REPORT_API_URL
 } from '../utils/constants.js';
 
 // ==================== URL 协议守卫 ====================
@@ -707,44 +707,200 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
     pageMetrics: pageMetrics || tabState.pageMetrics || null
   };
 
-  // 运行评分引擎
+  // 运行评分引擎（两阶段：同步首屏 + Whois异步补充）
   try {
-    const evalResult = await ScoringEngine.evaluate(ctx);
+    // ═══ 阶段1：同步评估（规则一~五，不含Whois网络请求）═══
+    const syncResult = await ScoringEngine.evaluateSync(ctx);
 
-    tabState.score = evalResult.totalScore;
-    tabState.riskLevel = evalResult.riskLevel;
-    tabState.ruleResults = evalResult.breakdown;
-    tabState.correctUrl = evalResult.correctUrl;
-    tabState.officialName = evalResult.officialName;
+    tabState.score = syncResult.totalScore;
+    tabState.riskLevel = syncResult.riskLevel;
+    tabState.ruleResults = syncResult.breakdown;
+    tabState.correctUrl = syncResult.correctUrl;
+    tabState.officialName = syncResult.officialName;
     tabState.isAnalyzed = true;
+    tabState._whoisPending = (syncResult._syncDomainAgeResult.creationDays < 0) &&
+      !syncResult.isConfirmedOfficial;
     tabState.lastAnalyzed = Date.now();
     if (pageMetrics) tabState.pageMetrics = pageMetrics;
     if (linkMetrics) tabState.linkMetrics = linkMetrics;
 
     await saveTabState(tabId, tabState);
 
-    // 写入缓存（清洗瞬时事件数据，防止缓存污染）
+    // 写入初始缓存
     await CacheManager.set(domain, {
-      score: evalResult.totalScore,
-      isMalicious: evalResult.isSuspicious,
-      correctUrl: evalResult.correctUrl,
-      ruleResults: sanitizeRuleResultsForCache(evalResult.breakdown)
+      score: syncResult.totalScore,
+      isMalicious: syncResult.isSuspicious,
+      correctUrl: syncResult.correctUrl,
+      ruleResults: sanitizeRuleResultsForCache(syncResult.breakdown)
     });
 
-    // 根据分数执行响应
-    if (evalResult.totalScore >= SCORE_THRESHOLD) {
+    // 根据同步分数执行即时响应
+    if (syncResult.totalScore >= SCORE_THRESHOLD) {
       await triggerWarningFlow(tabId, tabState);
     } else {
-      setIconGreen(tabId, evalResult.totalScore);
+      setIconGreen(tabId, syncResult.totalScore);
     }
 
-    console.log('[ServiceWorker] 分析完成:', {
-      domain, score: evalResult.totalScore,
-      riskLevel: evalResult.riskLevel, cached: false
+    console.log('[ServiceWorker] 阶段1分析完成:', {
+      domain, score: syncResult.totalScore,
+      riskLevel: syncResult.riskLevel, whoisPending: tabState._whoisPending
     });
+
+    // ═══ 阶段2：异步 Whois 域名年龄补充（不阻塞主流程） ═══
+    if (tabState._whoisPending) {
+      // 保存上下文用于异步回调中的竞态检查
+      const ctxSnapshot = {
+        domain, tabId, pageUrl: tabState.url || url,
+        syncScore: syncResult.totalScore,
+        syncBreakdown: syncResult.breakdown,
+        correctUrl: syncResult.correctUrl,
+        officialName: syncResult.officialName,
+        isConfirmedOfficial: syncResult.isConfirmedOfficial,
+        preliminaryScore: syncResult.preliminaryScore,
+        syncDomainAgeResult: syncResult._syncDomainAgeResult
+      };
+
+      ScoringEngine.evaluateDomainAgePart(
+        domain,
+        syncResult.preliminaryScore,
+        syncResult._syncDomainAgeResult,
+        syncResult.isConfirmedOfficial
+      ).then(async (whoisResult) => {
+        await _applyWhoisUpdate(ctxSnapshot, whoisResult);
+      }).catch(e => {
+        console.error('[ServiceWorker] Whois异步补充失败:', domain, e);
+      });
+    }
 
   } catch (error) {
     console.error('[ServiceWorker] 评分失败:', error);
+  }
+}
+
+/**
+ * 应用 Whois 异步查询结果，增量更新标签页状态。
+ * 仅在分数跨过阈值时补触发警告流程。
+ *
+ * @param {Object} ctx - 阶段1的上下文快照
+ * @param {Object} whoisResult - evaluateDomainAgePart 的返回结果
+ */
+async function _applyWhoisUpdate(ctx, whoisResult) {
+  const { domain, tabId, syncScore, syncBreakdown, correctUrl, officialName } = ctx;
+
+  // 竞态条件检查：用户是否已导航到其他页面
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const currentDomain = UrlUtils.extractHostname(tab.url || '');
+    if (currentDomain !== domain) {
+      console.log('[ServiceWorker] Whois结果过期（用户已导航）:', domain, '→', currentDomain);
+      return;
+    }
+  } catch (e) {
+    // 标签页已关闭
+    console.log('[ServiceWorker] Whois结果过期（标签页已关闭）:', tabId);
+    return;
+  }
+
+  // 加载最新 tabState
+  const tabState = await loadTabState(tabId);
+  if (tabState.domain !== domain) {
+    console.log('[ServiceWorker] Whois结果过期（tabState域名不匹配）:', domain);
+    return;
+  }
+
+  // 合并 breakdown：更新 domainAge 和 ageBonus
+  const mergedBreakdown = { ...(tabState.ruleResults || syncBreakdown) };
+  mergedBreakdown.domainAge = whoisResult.domainAgeResult;
+  mergedBreakdown.ageBonus = whoisResult.ageBonusResult;
+
+  const newScore = whoisResult.totalScore;
+  const oldScore = tabState.score || syncScore;
+
+  tabState.score = newScore;
+  tabState.riskLevel = whoisResult.riskLevel;
+  tabState.ruleResults = mergedBreakdown;
+  tabState._whoisPending = false;
+  await saveTabState(tabId, tabState);
+
+  // 更新缓存
+  await CacheManager.set(domain, {
+    score: newScore,
+    isMalicious: whoisResult.isSuspicious,
+    correctUrl: correctUrl,
+    ruleResults: sanitizeRuleResultsForCache(mergedBreakdown)
+  });
+
+  // 仅在分数从 <100 跨到 ≥100 时补触发警告（保守策略：不降级）
+  if (newScore >= SCORE_THRESHOLD && oldScore < SCORE_THRESHOLD) {
+    console.log('[ServiceWorker] Whois异步补充 → 分数跨过阈值，补触发警告:', {
+      domain, oldScore, newScore
+    });
+    await triggerWarningFlow(tabId, tabState);
+  } else {
+    // 更新图标（可能分数有变化但不跨阈值）
+    if (newScore >= SCORE_THRESHOLD) {
+      setIconRed(tabId);
+    } else {
+      setIconGreen(tabId, newScore);
+    }
+  }
+
+  console.log('[ServiceWorker] 阶段2 Whois补充完成:', {
+    domain, oldScore, newScore,
+    creationDays: whoisResult.domainAgeResult.creationDays
+  });
+}
+
+/**
+ * 异步 POST 用户上报数据到 Cloudflare Worker → 创建 GitHub Issue。
+ * Fire-and-forget：不阻塞响应，失败不影响本地存储。
+ *
+ * @param {string} reportType - 'false_positive' | 'confirmed_phish'
+ * @param {string} domain - 上报的域名
+ * @param {string} note - 用户备注
+ */
+async function _postReportToWorker(reportType, domain, note) {
+  try {
+    // 收集当前标签页的检测详情（用于丰富 Issue body）
+    let score = 0;
+    let ruleResults = null;
+    let pageUrl = '';
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs.length > 0) {
+        const ts = await loadTabState(tabs[0].id);
+        score = ts.score || 0;
+        ruleResults = ts.ruleResults || null;
+        pageUrl = ts.url || tabs[0].url || '';
+      }
+    } catch (e) { /* 获取 tabState 失败，使用默认值 */ }
+
+    const payload = {
+      reportType,
+      domain,
+      score,
+      version: VERSION,
+      timestamp: Date.now(),
+      note: note || '',
+      ruleResults,
+      url: pageUrl
+    };
+
+    const response = await fetch(REPORT_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if (response.ok) {
+      const result = await response.json().catch(() => ({}));
+      console.log('[ServiceWorker] GitHub Issue 已创建:', result.issueUrl || 'success');
+    } else {
+      console.warn('[ServiceWorker] Worker 返回错误:', response.status, await response.text().catch(() => ''));
+    }
+  } catch (e) {
+    // Worker 不可用时静默失败（本地存储已保存）
+    console.warn('[ServiceWorker] 上报 Worker 不可达:', e.message);
   }
 }
 
@@ -873,8 +1029,11 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
         console.log('[ServiceWorker] 缓存回退：从CacheManager补充评分:', tabState.domain, existingScore);
       }
     }
+    // 获取规则一的仿冒匹配结果（用于官网劫持检测）
+    const matchedEntry = (tabState.ruleResults && tabState.ruleResults.rule1)
+      ? tabState.ruleResults.rule1.matchedEntry || null : null;
     const rule2Result = await ScoringEngine._evaluateRule2(
-      tabState.downloadState, tabState.linkMetrics, existingScore
+      tabState.downloadState, tabState.linkMetrics, existingScore, matchedEntry
     );
 
     tabState.ruleResults.rule2 = rule2Result;
@@ -1211,6 +1370,85 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       DownloadBlacklist.remove(targetDomain).then(() => {
         sendResponse({ success: true, removed: targetDomain });
       });
+      return true;
+    }
+
+    // 用户上报：误报 / 确认钓鱼
+    case MSG_TYPES.SUBMIT_REPORT:
+    case 'SUBMIT_REPORT': {
+      (async () => {
+        try {
+          const { reportType, domain, note } = message.payload || {};
+          if (!reportType || !domain) {
+            sendResponse({ success: false, error: '缺少 reportType 或 domain' });
+            return;
+          }
+
+          // 加载现有上报记录
+          const r = await chrome.storage.local.get(STORAGE_KEYS.USER_REPORTS);
+          const reports = r[STORAGE_KEYS.USER_REPORTS] || [];
+
+          // 追加新记录
+          reports.push({
+            domain,
+            type: reportType,  // 'false_positive' | 'confirmed_phish'
+            timestamp: Date.now(),
+            note: note || '',
+            version: VERSION
+          });
+
+          // 上限 200 条
+          if (reports.length > 200) {
+            reports.splice(0, reports.length - 200);
+          }
+
+          await chrome.storage.local.set({ [STORAGE_KEYS.USER_REPORTS]: reports });
+          console.log('[ServiceWorker] 用户上报已保存:', reportType, domain);
+
+          // 异步 POST 到 Cloudflare Worker → 创建 GitHub Issue（fire-and-forget，不阻塞响应）
+          _postReportToWorker(reportType, domain, note);
+
+          // 自动操作：误报 → 加白名单；确认钓鱼 → 加下载黑名单（如果页面上有可疑下载域名）
+          if (reportType === 'false_positive') {
+            await addToWhitelist('https://' + domain);
+            // 清除该域名的缓存
+            await CacheManager.remove(domain);
+            // 更新当前活跃标签页状态
+            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+            if (tabs.length > 0) {
+              const ts = await loadTabState(tabs[0].id);
+              ts.isWhitelisted = true;
+              ts.score = 0;
+              ts.riskLevel = RISK_LEVEL.SAFE;
+              ts.isAnalyzed = true;
+              await saveTabState(tabs[0].id, ts);
+              setIconWhitelist(tabs[0].id);
+            }
+            sendResponse({ success: true, autoAction: 'whitelisted' });
+          } else if (reportType === 'confirmed_phish') {
+            // 确认钓鱼：将页面上的跨域下载域名加入黑名单
+            const ts = await loadTabState((await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id || 0);
+            if (ts && ts.linkMetrics && ts.linkMetrics.archiveDownloadLinks) {
+              const crossDomainLinks = ts.linkMetrics.archiveDownloadLinks.filter(l => l.isCrossDomain);
+              for (const link of crossDomainLinks) {
+                try {
+                  const dlDomain = new URL(link.href, 'http://placeholder').hostname;
+                  await DownloadBlacklist.add(dlDomain, {
+                    pageDomain: domain,
+                    pageUrl: ''
+                  }, link.ext || null);
+                } catch (e) { /* ignore */ }
+              }
+            }
+            sendResponse({ success: true, autoAction: 'blacklisted_downloads' });
+          } else {
+            sendResponse({ success: true });
+          }
+        } catch (e) {
+          console.error('[ServiceWorker] 上报处理失败:', e);
+          sendResponse({ success: false, error: e.message });
+        }
+      })();
       return true;
     }
 
