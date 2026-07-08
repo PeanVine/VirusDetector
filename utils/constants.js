@@ -80,10 +80,13 @@ export const ARCHIVE_EXTENSIONS = [
 
 // ==================== 规则四：链接分析 ====================
 // 链接指向当前页的判断阈值
-export const SAME_PAGE_LINK_THRESHOLD = 5;    // ≥5个同页链接 → 触发①
+export const SAME_PAGE_LINK_THRESHOLD = 8;    // ≥8个同页链接 → 触发①（排除导航区域后）
 
 // 重复链接检测阈值（规则四A-③）
 export const DUPLICATE_LINK_THRESHOLD = 4;    // ≥4个不同元素指向同一个链接 → 触发③
+
+// 死链最小数量（规则四A-②）
+export const DEAD_LINK_THRESHOLD = 3;    // ≥3条死链 → 触发②
 
 // 下载链接检测关键词（规则四A-③附加分）
 export const DOWNLOAD_LINK_KEYWORDS = [
@@ -134,7 +137,7 @@ export const AI_PAGE_THRESHOLDS = {
  *   - 关键词预筛避免对非推广页面的误报
  */
 /** 推广/产品页面关键词（中英文），用于预筛选 */
-export const EMOJI_PROMO_KEYWORDS = [
+export const PROMO_KEYWORDS = [
   // 中文关键词
   '下载', '产品', '软件', '安装', '免费', '官方', '应用', '工具',
   '版本', '最新', '破解', '注册', '激活', '绿色', '汉化', '插件',
@@ -241,10 +244,10 @@ export const RDAP_REQUEST_TIMEOUT = 10000;
 export const SCORE_DOMAIN_AGE_MAX = 60;          // 最大增加可疑分数
 
 /** 域名年龄衰减速率参数 a（越大衰减越快） */
-export const DOMAIN_AGE_DECAY_A = 2;
+export const DOMAIN_AGE_DECAY_A = 2.2;
 
 /** 域名年龄衰减零点参数 b（控制衰减中心位置，单位：60天） */
-export const DOMAIN_AGE_DECAY_B = 1;
+export const DOMAIN_AGE_DECAY_B = 1.9;
 
 // ==================== 下载链接跨域检测规则 ====================
 /** 下载链接与当前页面跨域（不同主域名）基础加分 */
@@ -288,7 +291,7 @@ export const SCORE_DOMAIN_AGE_BONUS_MAX = 20;        // 最大减分分值
 export const DOMAIN_AGE_BONUS_SCORE_THRESHOLD = 20;
 
 /** 域名年龄减分起始天数：注册天数 < 此值不减分 */
-export const DOMAIN_AGE_BONUS_MIN_DAYS = 180;
+export const DOMAIN_AGE_BONUS_MIN_DAYS = 365;
 
 /** 域名年龄减分封顶天数：注册天数 ≥ 此值获得最大减分 */
 export const DOMAIN_AGE_BONUS_MAX_DAYS = 730;

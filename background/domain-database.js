@@ -556,6 +556,14 @@ const DOMAIN_DATABASE = [
     keywords: ['智谱清言', 'chatglm', '智谱', 'GLM', '清言', 'bigmodel'],
     isChineseBrand: true
   },
+  {
+    name: 'ChatGPT',
+    officialDomains: ['openai.com', 'chatgpt.com', 'platform.openai.com'],
+    correctUrl: 'https://chatgpt.com',
+    category: SOFTWARE_CATEGORIES.AI_CHAT,
+    keywords: ['ChatGPT', 'chatgpt', 'OpenAI', 'openai'],
+    isChineseBrand: false
+  },
 // ========== 下载工具 ==========
   {
     name: '迅雷',

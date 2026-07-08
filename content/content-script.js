@@ -2,14 +2,15 @@
  * Virus Detector — Content Script (内容脚本)
  *
  * 注入到每个页面中，负责采集页面数据供评分引擎使用。
- * 在 document_idle 阶段运行，分两次采集（600ms + 3500ms）以捕获懒加载内容。
+ * 在 document_idle 阶段运行，分两次空闲采集（600ms + 3500ms）以捕获懒加载内容。
+ * 二次扫描跳过 HEAD 死链验证，避免重复网络请求和主线程压力。
  *
  * @module content-script
  *
  * 职责：
  *   1. 采集链接分析数据 (collectLinkMetrics) — 规则四 + 规则二 Phase A 数据源
  *      - 同页链接（完整 URL 精确匹配）
- *      - 死链检测（HEAD 请求验证，上限 5 个）
+ *      - 死链检测（HEAD 请求验证，上限 5 个，二次扫描跳过）
  *      - 重复链接追踪（>=4 个元素指向同一链接 → 规则 A-③）
  *      - 外链下载分析（下载按钮文本 + 文件扩展名）
  *      - 压缩包链接专项采集（同域+跨域全覆盖，为 Rule 2 Phase A 提供主动扫描数据）
@@ -17,8 +18,10 @@
  *      - DOM节点数、外部资源去重总数、框架标记（HTML全文+window全局变量双重检测）、文本长度
  *   3. 扫描 ICP 备案号 (findIcpStrings) — 规则三数据源
  *      - 6 层递进扫描：footer → ICP 元素 → 底部 30% 区域 → <a> 链接 → fixed 元素 → TreeWalker
- *   4. 响应来自 Service Worker 的 REQUEST_PAGE_TEXT 重采请求
+ *   4. 响应来自 Service Worker 的 REQUEST_PAGE_TEXT 重采请求（仅返回派生文本指标，不传正文）
  */
+
+import {PROMO_KEYWORDS} from './utils/constants.js';
 
 (function () {
   'use strict';
@@ -32,7 +35,9 @@
    * - 重复链接（≥4个元素指向同一链接）
    * - 外链下载分析
    */
-  async function collectLinkMetrics() {
+  async function collectLinkMetrics(options) {
+    options = options || {};
+    var checkDeadLinks = options.checkDeadLinks !== false;
     var currentUrl = window.location.href;
     var currentOrigin = window.location.origin;
     var currentHost = window.location.hostname;
@@ -58,6 +63,11 @@
     // 收集待检测死链的候选项（同域名的不同路径链接）
     var deadLinkCandidates = [];
 
+    // 辅助函数：检查元素是否在导航/页头/页脚区域（这些区域的同页链接是正常行为）
+    function isInNavigationZone(el) {
+      return el.closest('nav, header, footer, [role="navigation"]') !== null;
+    }
+
     for (var i = 0; i < links.length; i++) {
       var link = links[i];
       var href = (link.getAttribute('href') || '').trim();
@@ -69,14 +79,16 @@
         continue;
       }
 
-      // ① 同页链接：仅当链接完整URL与当前页URL完全一致时计入
+      // ① 同页链接：仅当链接完整URL与当前页URL完全一致、且不在导航区域时计入
       try {
         var resolved = new URL(href, window.location.href);
         var resolvedHref = resolved.href;
 
-        // 严格比对：完整URL完全一致
+        // 严格比对：完整URL完全一致 + 排除导航/页头/页脚
         if (resolvedHref === currentUrl) {
-          samePageLinks++;
+          if (!isInNavigationZone(link)) {
+            samePageLinks++;
+          }
         } else if (resolved.hostname === currentHost) {
           // 同域名但不同路径 → 可能是死链候选
           deadLinkCandidates.push({ href: resolvedHref, text: (link.textContent || '').trim().substring(0, 50), element: link });
@@ -121,7 +133,7 @@
     }
 
     // ② 死链检测：对同域名不同路径的链接进行HEAD请求验证（限5个）
-    if (deadLinkCandidates.length > 0) {
+    if (checkDeadLinks && deadLinkCandidates.length > 0) {
       // 去重（按href）
       var uniqueCandidates = [];
       var seenHrefs = new Set();
@@ -243,6 +255,81 @@
       } catch (e2) { /* URL 解析失败，跳过 */ }
     }
 
+    // ==================== 页面文本中扫描隐藏压缩包链接（多级跳转检测） ====================
+    // 恶意跳转页面常在正文中以纯文本形式写下载链接（非 <a> 标签）
+    var TEXT_ARCHIVE_PATTERN = /https?:\/\/[^\s<>"'{}[\]|\\^`]+\.(zip|rar|7z|tar|gz|tgz|bz2|xz|iso|cab|arj|lzh|zst)(\?[^\s<>"'{}[\]|\\^`]*)?/gi;
+    var pageTextForScan = (document.body ? document.body.innerText : '') || '';
+    var textArchiveUrls = [];
+    var textArchiveSeen = new Set();
+
+    var tmatch;
+    while ((tmatch = TEXT_ARCHIVE_PATTERN.exec(pageTextForScan)) !== null) {
+      var rawUrl = tmatch[0];
+      try {
+        var tparsed = new URL(rawUrl);
+        var tnormalized = tparsed.href.replace(/#.*$/, '');
+        if (!textArchiveSeen.has(tnormalized)) {
+          textArchiveSeen.add(tnormalized);
+          textArchiveUrls.push({
+            href: tnormalized.substring(0, 200),
+            isCrossDomain: tparsed.hostname !== currentHost,
+            ext: '.' + tmatch[1].toLowerCase(),
+            source: 'text'
+          });
+        }
+      } catch (e) { /* 无效 URL，跳过 */ }
+    }
+
+    // ==================== .txt 文件内容解析（多级跳转检测） ====================
+    // 页面 <a> 标签可能指向 .txt 文件，其内容包含真实的下载链接
+    var txtLinks = [];
+    for (var j2 = 0; j2 < links.length; j2++) {
+      var tlink = links[j2];
+      var thref = (tlink.getAttribute('href') || '').trim();
+      if (!thref) continue;
+      var tlower = thref.toLowerCase();
+      if (tlower.endsWith('.txt') && !/^javascript\s*:/i.test(thref)) {
+        try {
+          var tresolved = new URL(thref, window.location.href);
+          txtLinks.push(tresolved.href);
+        } catch (e) {}
+      }
+    }
+
+    // 去重后最多尝试 3 个 .txt 文件
+    var uniqueTxtLinks = [];
+    var txtSeen = new Set();
+    for (var u = 0; u < txtLinks.length; u++) {
+      if (!txtSeen.has(txtLinks[u])) {
+        txtSeen.add(txtLinks[u]);
+        uniqueTxtLinks.push(txtLinks[u]);
+      }
+    }
+    var txtToFetch = uniqueTxtLinks.slice(0, 3);
+    var txtDerivedArchiveUrls = [];
+
+    for (var t2 = 0; t2 < txtToFetch.length; t2++) {
+      try {
+        var resp = await fetchWithTimeout(txtToFetch[t2], {}, 3000);
+        if (resp.ok) {
+          var txtContent = await resp.text();
+          var ZIP_PATTERN = /https?:\/\/[^\s<>"'{}[\]|\\^`]+\.(zip|rar|7z|tar|gz|tgz|bz2|xz|iso|cab)(\?[^\s<>"'{}[\]|\\^`]*)?/gi;
+          var zmatch;
+          while ((zmatch = ZIP_PATTERN.exec(txtContent)) !== null) {
+            try {
+              var zurl = new URL(zmatch[0]);
+              txtDerivedArchiveUrls.push({
+                href: zurl.href.substring(0, 200),
+                isCrossDomain: zurl.hostname !== currentHost,
+                ext: '.' + zmatch[1].toLowerCase(),
+                source: 'txt-derived'
+              });
+            } catch (e) {}
+          }
+        }
+      } catch (e) { /* CORS 阻止或网络错误，跳过 */ }
+    }
+
     return {
       totalLinks: links.length,
       samePageLinks: samePageLinks, deadLinks: deadLinks, deadLinkSamples: deadLinkSamples,
@@ -255,7 +342,10 @@
       // 规则四A-③
       duplicateLinks: duplicateLinks,
       hasDuplicateLinks: duplicateLinks.length > 0,
-      hasDuplicateDownloadLink: duplicateLinks.some(function(d) { return d.isDownloadLink; })
+      hasDuplicateDownloadLink: duplicateLinks.some(function(d) { return d.isDownloadLink; }),
+      // 规则四 Part C 数据源：多级跳转检测
+      textArchiveUrls: textArchiveUrls,
+      txtDerivedArchiveUrls: txtDerivedArchiveUrls
     };
   }
 
@@ -285,7 +375,50 @@
 
   // ==================== 规则五：页面度量采集 ====================
 
-  function collectPageMetrics() {
+  function collectTextSignals(bodyText) {
+    bodyText = bodyText || '';
+    const textLength = bodyText.length;
+
+    // CJK 统计与 background/icp-utils.js 保持同一判定口径。
+    function isCJKChar(codePoint) {
+      return (codePoint >= 0x4E00 && codePoint <= 0x9FFF) ||
+        (codePoint >= 0x3400 && codePoint <= 0x4DBF) ||
+        (codePoint >= 0xF900 && codePoint <= 0xFAFF);
+    }
+
+    let cjkCount = 0;
+    for (let i = 0; i < textLength; i++) {
+      const cp = bodyText.codePointAt(i);
+      if (isCJKChar(cp)) cjkCount++;
+      if (cp > 0xFFFF) i++;
+    }
+    const cjkRatio = textLength > 0 ? cjkCount / textLength : 0;
+    const hasCJK = (cjkCount >= 30 && cjkRatio >= 0.08) || cjkCount >= 500;
+
+    const lowerText = bodyText.toLowerCase();
+    let promoKeywordMatchCount = 0;
+    for (const kw of PROMO_KEYWORDS) {
+      if (lowerText.includes(kw.toLowerCase())) promoKeywordMatchCount++;
+    }
+
+    const emojiRegex = /\p{Emoji_Presentation}|\p{Emoji}️/gu;
+    const emojiMatches = bodyText.match(emojiRegex) || [];
+    const emojiCount = emojiMatches.length;
+    const emojiDensity = textLength > 0 ? (emojiCount / textLength) * 1000 : 0;
+
+    return {
+      textLength,
+      cjkCount,
+      cjkRatio: Math.round(cjkRatio * 10000) / 10000,
+      hasCJK,
+      promoKeywordMatchCount,
+      emojiCount,
+      emojiDensity: Math.round(emojiDensity * 100) / 100
+    };
+  }
+
+  function collectPageMetrics(bodyText) {
+    bodyText = bodyText || '';
     const html = document.documentElement.outerHTML || '';
     const htmlLines = html.split('\n').length;
 
@@ -345,8 +478,8 @@
     var totalExternalResources = allExternal.size;
     var hasExternalResources = totalExternalResources > 0;
 
-    // 框架标记检测（增强版：HTML全文扫描 + window全局变量双重检测）
-    // 注：此列表需与 utils/constants.js 中 FRAMEWORK_HTML_MARKERS 保持同步
+    // 框架标记检测：优先基于资源 URL 和 DOM 特征，避免依赖 Content Script 隔离世界中不可靠的 window.* 全局变量。
+    // 注：HTML marker 列表需与 utils/constants.js 中 FRAMEWORK_HTML_MARKERS 保持同步
     const FRAMEWORK_HTML_MARKERS = [
       'react', 'vue', 'angular', 'webpack', '__initial_state__',
       '_next/', 'nuxt', 'svelte', 'jquery', 'bootstrap',
@@ -355,7 +488,54 @@
       'webpackjsonp', '__webpack_require__', '__nuxt', '__next'
     ];
 
-    // A. HTML 源码全文扫描（不再限制5000字符，搜索范围覆盖整个HTML文档）
+    const FRAMEWORK_RESOURCE_MARKERS = [
+      '_next/', '/_next/', 'next/static', '_nuxt/', '/_nuxt/',
+      'react', 'react-dom', 'vue', 'vue-router', 'angular',
+      'svelte', 'jquery', 'bootstrap', 'webpack'
+    ];
+
+    const scriptSrcs = Array.from(document.querySelectorAll('script[src]'))
+      .map(function(s) { return s.getAttribute('src') || ''; })
+      .filter(Boolean);
+    const linkHrefs = Array.from(document.querySelectorAll('link[href]'))
+      .map(function(l) { return l.getAttribute('href') || ''; })
+      .filter(Boolean);
+    const resourceUrlText = scriptSrcs.concat(linkHrefs).join(' ').toLowerCase();
+
+    // A. 资源 URL 扫描（框架产物通常会在 script/link URL 中留下稳定目录或包名）
+    var resourceFrameworkHits = [];
+    for (var rf = 0; rf < FRAMEWORK_RESOURCE_MARKERS.length; rf++) {
+      if (resourceUrlText.indexOf(FRAMEWORK_RESOURCE_MARKERS[rf]) !== -1) {
+        resourceFrameworkHits.push(FRAMEWORK_RESOURCE_MARKERS[rf]);
+      }
+    }
+
+    // B. DOM 特征扫描：框架根节点、SSR 数据节点、编译产物属性等。
+    var domFrameworkHits = [];
+    try {
+      if (document.getElementById('__next') || document.querySelector('[id="__next"]')) domFrameworkHits.push('next-dom');
+      if (document.getElementById('__nuxt') || document.querySelector('[id="__nuxt"]')) domFrameworkHits.push('nuxt-dom');
+      if (document.querySelector('[ng-version]')) domFrameworkHits.push('angular-dom');
+      if (document.querySelector('[data-reactroot], [data-reactid]')) domFrameworkHits.push('react-dom');
+      if (document.querySelector('[data-svelte-h], [data-sveltekit]')) domFrameworkHits.push('svelte-dom');
+      if (document.querySelector('[x-data]')) domFrameworkHits.push('alpine-dom');
+
+      const attrScanNodes = document.getElementsByTagName('*');
+      const attrScanLimit = Math.min(attrScanNodes.length, 2000);
+      for (let ai = 0; ai < attrScanLimit; ai++) {
+        const attrs = attrScanNodes[ai].attributes || [];
+        for (let aj = 0; aj < attrs.length; aj++) {
+          const attrName = attrs[aj].name || '';
+          if (attrName.startsWith('data-v-')) {
+            domFrameworkHits.push('vue-sfc-dom');
+            ai = attrScanLimit; // 跳出外层扫描
+            break;
+          }
+        }
+      }
+    } catch (e) { /* DOM 查询异常时跳过框架 DOM 特征 */ }
+
+    // C. HTML 源码全文扫描（兜底，覆盖 SSR 数据和内联框架标记）
     const htmlLower = html.toLowerCase();
     var htmlFrameworkHits = [];
     for (var i = 0; i < FRAMEWORK_HTML_MARKERS.length; i++) {
@@ -364,26 +544,10 @@
       }
     }
 
-    // B. window 全局变量检测（捕获外部JS加载的框架，即使HTML源码中无痕迹）
-    var globalFrameworkHits = [];
-    try {
-      if (window.React || window.__REACT_DEVTOOLS_GLOBAL_HOOK__) globalFrameworkHits.push('react');
-      if (window.Vue || window.__VUE__) globalFrameworkHits.push('vue');
-      if (window.angular || document.querySelector('[ng-version]')) globalFrameworkHits.push('angular');
-      if (window.jQuery) globalFrameworkHits.push('jquery');
-      if (window.__NEXT_DATA__) globalFrameworkHits.push('next');
-      if (window.__NUXT__) globalFrameworkHits.push('nuxt');
-      if (window.__webpack_require__ || window.webpackJsonp) globalFrameworkHits.push('webpack');
-      if (window.__svelte || window.__svelte__) globalFrameworkHits.push('svelte');
-      if (window.bootstrap || (window.jQuery && window.jQuery.fn && window.jQuery.fn.modal)) globalFrameworkHits.push('bootstrap');
-      // Vue 的 DOM 痕迹（Vue 会在元素上添加 data-v-xxxxxxxx 属性）
-      if (document.querySelector('[data-v-]')) globalFrameworkHits.push('vue');
-    } catch (e) { /* 跨域iframe或安全策略可能抛出异常 */ }
-
     // 合并并去重
     var allFrameworkHits = [];
     var frameworkSeen = new Set();
-    htmlFrameworkHits.concat(globalFrameworkHits).forEach(function(hit) {
+    resourceFrameworkHits.concat(domFrameworkHits, htmlFrameworkHits).forEach(function(hit) {
       if (!frameworkSeen.has(hit)) {
         frameworkSeen.add(hit);
         allFrameworkHits.push(hit);
@@ -391,8 +555,43 @@
     });
     var hasFrameworkMarkers = allFrameworkHits.length > 0;
 
+    // JS 引用规范检查：模板化/克隆式资源布局，不依赖单一固定路径。
+    const suspiciousScriptRefs = [];
+    const suspiciousScriptPatterns = [
+      {
+        type: 'generic_lang_bundle',
+        pattern: /(^|\/)js\/(lang|language|i18n|locale|locales)\/[^/]+\.js$/
+      },
+      {
+        type: 'template_lang_bundle',
+        pattern: /(^|\/)(p|template|templates|theme|themes|skin|skins|static|statics|public|assets)\/js\/(lang|language|i18n|locale|locales)\/[^/]+\.js$/
+      },
+      {
+        type: 'template_generic_bundle',
+        pattern: /(^|\/)(p|template|templates|theme|themes|skin|skins|statics)\/js\/(common|config|public|base|main|app|index|jquery)[^/]*\.js$/
+      }
+    ];
+    for (let si = 0; si < scriptSrcs.length; si++) {
+      const rawSrc = scriptSrcs[si];
+      let pathname = '';
+      try {
+        pathname = new URL(rawSrc, window.location.href).pathname.toLowerCase();
+      } catch (e) {
+        pathname = rawSrc.toLowerCase().split('?')[0].split('#')[0];
+      }
+      for (let pi = 0; pi < suspiciousScriptPatterns.length; pi++) {
+        const item = suspiciousScriptPatterns[pi];
+        if (item.pattern.test(pathname)) {
+          suspiciousScriptRefs.push({
+            type: item.type,
+            src: rawSrc.substring(0, 160)
+          });
+          break;
+        }
+      }
+    }
+
     // 页面文本长度
-    const bodyText = (document.body ? document.body.innerText : '') || '';
     const textLength = bodyText.length;
 
     // Meta generator（AI生成页面的典型特征，保留供未来分析）
@@ -414,6 +613,8 @@
       totalScriptsWithSrc,
       hasFrameworkMarkers,
       frameworkHits: allFrameworkHits,
+      suspiciousScriptRefCount: suspiciousScriptRefs.length,
+      suspiciousScriptRefs: suspiciousScriptRefs.slice(0, 5),
       textLength,
       generator,
       inlineStyles,
@@ -541,7 +742,7 @@
 
     // 6. TreeWalker 扫描全页面所有文本节点
     let count = 0;
-    const MAX_NODES = 50000; // 足够覆盖大型页面
+    const MAX_NODES = 15000; // 控制大型页面扫描成本，常规 ICP 文本通常位于页脚或备案相关元素
     try {
       const walker = document.createTreeWalker(
         document.body || document.documentElement, NodeFilter.SHOW_TEXT,
@@ -585,24 +786,26 @@
   // 首次扫描结果缓存，用于二次扫描去重
   var _firstScanData = null;
 
-  async function sendAnalysisResult() {
+  async function sendAnalysisResult(options) {
+    options = options || {};
     // 每个采集函数独立 try-catch，一个失败不影响其他
-    var pageMetrics = safeCollect(collectPageMetrics, null);
+    var bodyText = safeCollect(function() { return (document.body ? document.body.innerText : '') || ''; }, '');
+    var pageMetrics = safeCollect(function() { return collectPageMetrics(bodyText); }, null);
     var icpStrings = safeCollect(findIcpStrings, []);
     // 链接分析含异步HEAD请求检测死链，需await
     var linkMetrics = null;
     try {
-      linkMetrics = await collectLinkMetrics();
+      linkMetrics = await collectLinkMetrics({ checkDeadLinks: options.checkDeadLinks !== false });
     } catch (e) {
       console.error('[VirusDetector] 链接分析采集失败:', e);
     }
 
     var hasIcpGovLink = checkIcpGovLink();
+    var textSignals = safeCollect(function() { return collectTextSignals(bodyText); }, null);
     var payload = {
       url: window.location.href, domain: window.location.hostname, title: document.title,
-      pageText: safeCollect(function() { return (document.body ? document.body.innerText : '').substring(0, 15000); }, ''),
       icpStrings: icpStrings, pageMetrics: pageMetrics, linkMetrics: linkMetrics,
-      hasIcpGovLink: hasIcpGovLink
+      hasIcpGovLink: hasIcpGovLink, textSignals: textSignals
     };
 
     // 二次扫描去重：与首次结果比对，无新增数据则跳过发送
@@ -640,17 +843,18 @@
         try {
           var linkMetrics = null;
           try {
-            linkMetrics = await collectLinkMetrics();
+            linkMetrics = await collectLinkMetrics({ checkDeadLinks: true });
           } catch (e) {
             console.error('[VirusDetector] 链接分析采集失败:', e);
           }
+          var bodyText = (document.body ? document.body.innerText : '') || '';
           sendResponse({
             success: true,
-            pageMetrics: safeCollect(collectPageMetrics, null),
+            pageMetrics: safeCollect(function() { return collectPageMetrics(bodyText); }, null),
             linkMetrics: linkMetrics,
             icpStrings: safeCollect(findIcpStrings, []),
             hasIcpGovLink: checkIcpGovLink(),
-            pageText: (document.body ? document.body.innerText : '').substring(0, 15000),
+            textSignals: safeCollect(function() { return collectTextSignals(bodyText); }, null),
             title: document.title,
             url: window.location.href
           });
@@ -665,16 +869,30 @@
 
   // ==================== 初始化 ====================
 
+  function runWhenIdle(fn) {
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(fn, { timeout: 1500 });
+    } else {
+      setTimeout(fn, 0);
+    }
+  }
+
+  function scheduleAnalysis(delayMs, options) {
+    setTimeout(function() {
+      runWhenIdle(function() { sendAnalysisResult(options); });
+    }, delayMs);
+  }
+
   function init() {
-    setTimeout(sendAnalysisResult, 600);
-    // 二次扫描（懒加载页脚）
-    setTimeout(sendAnalysisResult, 3500);
+    scheduleAnalysis(600, { checkDeadLinks: true });
+    // 二次扫描用于捕获懒加载内容，但跳过 HEAD 死链验证以降低页面和网络成本。
+    scheduleAnalysis(3500, { checkDeadLinks: false });
   }
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     init();
   } else {
-    window.addEventListener('load', () => setTimeout(sendAnalysisResult, 600));
+    window.addEventListener('load', () => scheduleAnalysis(600, { checkDeadLinks: true }));
   }
 
 })();
