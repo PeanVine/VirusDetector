@@ -21,10 +21,20 @@
  *   4. 响应来自 Service Worker 的 REQUEST_PAGE_TEXT 重采请求（仅返回派生文本指标，不传正文）
  */
 
-import {PROMO_KEYWORDS} from './utils/constants.js';
-
-(function () {
+(async function () {
   'use strict';
+
+  // 推广/产品页面关键词（内联自 constants.js，避免 content_scripts 动态导入受限）
+  const PROMO_KEYWORDS = [
+    '下载', '产品', '软件', '安装', '免费', '官方', '应用', '工具',
+    '版本', '最新', '破解', '注册', '激活', '绿色', '汉化', '插件',
+    '专业版', '正式版', '购买', '激活码', '注册机', '补丁', '试用',
+    '客户端', '安装包', '精简版', '去广告', '便携版',
+    'download', 'product', 'software', 'install', 'free', 'official',
+    'app', 'tool', 'version', 'latest', 'crack', 'register', 'activate',
+    'pro', 'premium', 'setup', 'license', 'keygen', 'patch', 'trial',
+    'portable', 'release', 'full version'
+  ];
 
   // ==================== 规则四：链接分析数据采集 ====================
 
@@ -837,13 +847,38 @@ import {PROMO_KEYWORDS} from './utils/constants.js';
 
   // ==================== 消息监听 ====================
 
+  /**
+   * 读取 checkDeadLinks 设置（从 chrome.storage.local）。
+   * 优先使用已缓存的设置值，缓存未命中时返回 true（默认启用死链检测）。
+   * @returns {Promise<boolean>}
+   */
+  let _cachedCheckDeadLinks = true;
+  async function getCheckDeadLinksSetting() {
+    try {
+      const r = await chrome.storage.local.get('global_settings');
+      const gs = r.global_settings || {};
+      _cachedCheckDeadLinks = gs.checkDeadLinks !== false;
+    } catch (e) { /* ignore */ }
+    return _cachedCheckDeadLinks;
+  }
+
+  // 监听设置变更广播
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message && message.type === 'UPDATE_SETTINGS') {
+      if (message.payload && message.payload.checkDeadLinks !== undefined) {
+        _cachedCheckDeadLinks = message.payload.checkDeadLinks;
+      }
+    }
+  });
+
+  // 主消息监听
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message && message.type === 'REQUEST_PAGE_TEXT') {
       (async () => {
         try {
           var linkMetrics = null;
           try {
-            linkMetrics = await collectLinkMetrics({ checkDeadLinks: true });
+            linkMetrics = await collectLinkMetrics({ checkDeadLinks: _cachedCheckDeadLinks });
           } catch (e) {
             console.error('[VirusDetector] 链接分析采集失败:', e);
           }
@@ -884,7 +919,11 @@ import {PROMO_KEYWORDS} from './utils/constants.js';
   }
 
   function init() {
-    scheduleAnalysis(600, { checkDeadLinks: true });
+    // 异步读取用户设置中的 checkDeadLinks 偏好
+    getCheckDeadLinksSetting().then(function(checkDeadLinks) {
+      _cachedCheckDeadLinks = checkDeadLinks;
+    });
+    scheduleAnalysis(600, { checkDeadLinks: _cachedCheckDeadLinks });
     // 二次扫描用于捕获懒加载内容，但跳过 HEAD 死链验证以降低页面和网络成本。
     scheduleAnalysis(3500, { checkDeadLinks: false });
   }
@@ -892,7 +931,7 @@ import {PROMO_KEYWORDS} from './utils/constants.js';
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     init();
   } else {
-    window.addEventListener('load', () => scheduleAnalysis(600, { checkDeadLinks: true }));
+    window.addEventListener('load', () => scheduleAnalysis(600, { checkDeadLinks: _cachedCheckDeadLinks }));
   }
 
 })();

@@ -29,8 +29,9 @@ import { UrlUtils } from '../utils/url-utils.js';
 import {
   SCORE_THRESHOLD, DOWNLOAD_CONFIRM_THRESHOLD, RISK_LEVEL, MSG_TYPES,
   STORAGE_KEYS, CACHE_TTL, DETECT_NON_ARCHIVE_FILES_DEFAULT,
-  VERSION, REPORT_API_URL
+  VERSION, REPORT_API_URL, GITHUB_RELEASES_API_URL, GITHUB_RELEASES_PAGE
 } from '../utils/constants.js';
+import { SETTINGS_DEFAULTS } from '../utils/settings-schema.js';
 
 // ==================== URL 协议守卫 ====================
 
@@ -53,6 +54,102 @@ function shouldSkipUrl(url) {
     return protocol !== 'http:' && protocol !== 'https:';
   } catch (e) {
     return true; // 无法解析的 URL 视为应跳过
+  }
+}
+
+// ==================== 全局设置缓存 ====================
+
+/** 内存缓存：避免每次评分都读取 storage */
+let _settingsCache = null;
+
+/**
+ * 获取当前生效的全局设置（含缓存）。
+ * 读取 chrome.storage.local 中的 global_settings，与默认值合并。
+ * @returns {Promise<Object>} 完整设置对象
+ */
+async function getSettings() {
+  if (_settingsCache) return _settingsCache;
+  _settingsCache = await loadGlobalSettings();
+  return _settingsCache;
+}
+
+/**
+ * 同步获取有效阈值（优先使用缓存的设置值，缓存未命中时回退到默认常量）。
+ * 用于不能 await 的同步上下文。
+ * @param {string} key - 设置键名
+ * @param {*} defaultVal - 回退默认值（通常为 constants.js 中的导出值）
+ * @returns {*}
+ */
+function getEffectiveThreshold(key, defaultVal) {
+  if (_settingsCache && _settingsCache[key] !== undefined) {
+    return _settingsCache[key];
+  }
+  return defaultVal;
+}
+
+// ==================== 更新检测 ====================
+
+/**
+ * 语义版本比较：返回 1 (a > b), -1 (a < b), 0 (相等)
+ */
+function compareVersions(a, b) {
+  const pa = String(a || '').split('.').map(Number);
+  const pb = String(b || '').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+    if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+  }
+  return 0;
+}
+
+/**
+ * 从 GitHub Releases API 检查最新版本，结果存入 chrome.storage.local。
+ * 公开仓库无需认证，24h 周期远低于 60次/小时的速率限制。
+ */
+async function checkForUpdate() {
+  const localVersion = VERSION;
+  console.log('[ServiceWorker] 正在检查更新，当前版本:', localVersion);
+  try {
+    const resp = await fetch(GITHUB_RELEASES_API_URL, {
+      headers: {
+        'Accept': 'application/vnd.github+json',
+        'User-Agent': `VirusDetector/${VERSION}`
+      }
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+    const release = await resp.json();
+    const tagName = release.tag_name || '';
+    const remoteVersion = tagName.replace(/^v/i, '');
+    const hasUpdate = compareVersions(remoteVersion, localVersion) > 0;
+
+    const info = {
+      lastCheck: Date.now(),
+      latestVersion: remoteVersion,
+      currentVersion: localVersion,
+      hasUpdate,
+      releaseUrl: release.html_url || GITHUB_RELEASES_PAGE,
+      releaseNotes: (release.body || '').substring(0, 2000),
+      publishedAt: release.published_at || null,
+      error: null
+    };
+    await chrome.storage.local.set({ [STORAGE_KEYS.UPDATE_INFO]: info });
+
+    console.log('[ServiceWorker] 更新检查完成:', hasUpdate ? `发现新版本 v${remoteVersion}` : '已是最新版本');
+  } catch (e) {
+    console.error('[ServiceWorker] 更新检查失败:', e.message);
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.UPDATE_INFO]: {
+        lastCheck: Date.now(),
+        latestVersion: null,
+        currentVersion: localVersion,
+        hasUpdate: false,
+        releaseUrl: null,
+        releaseNotes: null,
+        publishedAt: null,
+        error: e.message
+      }
+    });
   }
 }
 
@@ -272,18 +369,20 @@ async function removeFromWhitelist(url) {
 }
 
 /**
- * 加载全局设置（当前仅含非压缩包检测开关，后续由设置页扩展）
- * @returns {Promise<Object>} { detectNonArchiveFiles: boolean }
+ * 加载全局设置，与默认值合并确保所有键存在。
+ * 当前包含：
+ *   - detectNonArchiveFiles：非压缩包可执行文件检测开关
+ *   - 各检测规则开关、评分阈值、时间参数等（详见 settings-schema.js）
+ * @returns {Promise<Object>} 完整设置对象
  */
 async function loadGlobalSettings() {
   try {
     const r = await chrome.storage.local.get(STORAGE_KEYS.GLOBAL_SETTINGS);
-    const settings = r[STORAGE_KEYS.GLOBAL_SETTINGS] || {};
-    return {
-      detectNonArchiveFiles: settings.detectNonArchiveFiles ?? DETECT_NON_ARCHIVE_FILES_DEFAULT
-    };
+    const stored = r[STORAGE_KEYS.GLOBAL_SETTINGS] || {};
+    // 合并默认值：新版本新增的键自动获得默认值
+    return { ...SETTINGS_DEFAULTS, ...stored };
   } catch (e) {
-    return { detectNonArchiveFiles: DETECT_NON_ARCHIVE_FILES_DEFAULT };
+    return { ...SETTINGS_DEFAULTS };
   }
 }
 
@@ -711,8 +810,11 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
 
   // 运行评分引擎（两阶段：同步首屏 + Whois异步补充）
   try {
+    // 获取当前设置（含阈值覆盖）
+    const settings = await getSettings();
+
     // ═══ 阶段1：同步评估（规则一~五，不含Whois网络请求）═══
-    const syncResult = await ScoringEngine.evaluateSync(ctx);
+    const syncResult = await ScoringEngine.evaluateSync(ctx, settings);
 
     tabState.score = syncResult.totalScore;
     tabState.riskLevel = syncResult.riskLevel;
@@ -737,7 +839,7 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
     });
 
     // 根据同步分数执行即时响应
-    if (syncResult.totalScore >= SCORE_THRESHOLD) {
+    if (syncResult.totalScore >= getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD)) {
       await triggerWarningFlow(tabId, tabState);
     } else {
       setIconGreen(tabId, syncResult.totalScore);
@@ -766,7 +868,8 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
         domain,
         syncResult.preliminaryScore,
         syncResult._syncDomainAgeResult,
-        syncResult.isConfirmedOfficial
+        syncResult.isConfirmedOfficial,
+        settings
       ).then(async (whoisResult) => {
         await _applyWhoisUpdate(ctxSnapshot, whoisResult);
       }).catch(e => {
@@ -832,15 +935,15 @@ async function _applyWhoisUpdate(ctx, whoisResult) {
     ruleResults: sanitizeRuleResultsForCache(mergedBreakdown)
   });
 
-  // 仅在分数从 <100 跨到 ≥100 时补触发警告（保守策略：不降级）
-  if (newScore >= SCORE_THRESHOLD && oldScore < SCORE_THRESHOLD) {
+  // 仅在分数从低于阈值跨到≥阈值时补触发警告（保守策略：不降级）
+  if (newScore >= getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD) && oldScore < getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD)) {
     console.log('[ServiceWorker] Whois异步补充 → 分数跨过阈值，补触发警告:', {
       domain, oldScore, newScore
     });
     await triggerWarningFlow(tabId, tabState);
   } else {
     // 更新图标（可能分数有变化但不跨阈值）
-    if (newScore >= SCORE_THRESHOLD) {
+    if (newScore >= getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD)) {
       setIconRed(tabId);
     } else {
       setIconGreen(tabId, newScore);
@@ -1050,12 +1153,12 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     const newScore = Object.values(tabState.ruleResults)
       .reduce((sum, r) => sum + (r.score || 0), 0);
     tabState.score = newScore;
-    tabState.riskLevel = newScore >= SCORE_THRESHOLD ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE;
+    tabState.riskLevel = newScore >= getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD) ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE;
 
     await saveTabState(tabId, tabState);
 
     // 分数达标 → 取消下载
-    if (newScore >= DOWNLOAD_CONFIRM_THRESHOLD) {
+    if (newScore >= getEffectiveThreshold('downloadConfirmThreshold', DOWNLOAD_CONFIRM_THRESHOLD)) {
       // 取消下载（≥80 分即拦截）
       try {
         await chrome.downloads.cancel(downloadItem.id);
@@ -1083,16 +1186,16 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
       // 弹出二次确认弹窗（80~99 分仅弹窗，无页面注入拦截）
       openDownloadConfirmation(tabState, downloadItem, fileName, downloadDomain, tabId);
 
-      // 更新缓存（≥100 标记为恶意，80~99 仅更新分数不触发注入）
+      // 更新缓存（≥scoreThreshold 标记为恶意，低于阈值仅更新分数不触发注入）
       await CacheManager.set(tabState.domain, {
         score: newScore,
-        isMalicious: newScore >= SCORE_THRESHOLD,
+        isMalicious: newScore >= getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD),
         correctUrl: tabState.correctUrl,
         ruleResults: sanitizeRuleResultsForCache(tabState.ruleResults)
       });
 
-      // ≥100 分：额外触发完整高危响应（警告窗口 + 图标变红 + 注入拦截脚本）
-      if (newScore >= SCORE_THRESHOLD) {
+      // ≥scoreThreshold：额外触发完整高危响应（警告窗口 + 图标变红 + 注入拦截脚本）
+      if (newScore >= getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD)) {
         await triggerWarningFlow(tabId, tabState);
       }
     } else {
@@ -1454,7 +1557,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return true;
     }
 
-    default: { sendResponse({ error: 'unknown type: ' + type }); }
+    case 'SETTINGS_UPDATED':
+    case MSG_TYPES.SETTINGS_UPDATED: {
+      _settingsCache = null;
+      console.log('[ServiceWorker] 设置已更新，缓存已失效');
+      sendResponse({ received: true });
+      break;
+    }
+    case 'BULK_UPDATE_WHITELIST':
+    case MSG_TYPES.BULK_UPDATE_WHITELIST: {
+      const domains = (message.payload && message.payload.domains) ? message.payload.domains : [];
+      saveWhitelist(domains).then(() => {
+        _whitelistCache = new Set(domains);
+        console.log('[ServiceWorker] 白名单已批量更新:', domains.length, '个域名');
+        sendResponse({ success: true, count: domains.length });
+      }).catch(e => {
+        sendResponse({ success: false, error: e.message });
+      });
+      return true;
+    }
+    case 'CHECK_UPDATE':
+    case MSG_TYPES.CHECK_UPDATE: {
+      (async () => {
+        await checkForUpdate();
+        const r = await chrome.storage.local.get(STORAGE_KEYS.UPDATE_INFO);
+        sendResponse({ success: true, data: r[STORAGE_KEYS.UPDATE_INFO] });
+      })();
+      return true;
+    }
+    default: { sendResponse({ error: 'unknown type: ' + type }); break; }
   }
   return false;
 });
@@ -1503,9 +1634,20 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     await CacheManager.clearAll();
     await DownloadBlacklist.cleanup();
   }
+  // 设置定时更新检查（每 24 小时）
+  await chrome.alarms.create('updateCheck', { periodInMinutes: 1440 });
+  // 首次检查
+  checkForUpdate();
 });
 
-// 存储变更监听：白名单 / 黑名单被其他页面修改时使内存缓存失效
+// 定时 alarm 触发更新检查
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'updateCheck') {
+    checkForUpdate();
+  }
+});
+
+// 存储变更监听：白名单 / 黑名单 / 设置被其他页面修改时使内存缓存失效
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === 'local') {
     if (changes[STORAGE_KEYS.WHITELIST]) {
@@ -1513,6 +1655,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
     }
     if (changes[STORAGE_KEYS.DOWNLOAD_BLACKLIST]) {
       DownloadBlacklist.invalidateCache();
+    }
+    if (changes[STORAGE_KEYS.GLOBAL_SETTINGS]) {
+      _settingsCache = null;
     }
   }
 });

@@ -52,9 +52,8 @@ import {
   SCORE_DOMAIN_AGE_MAX, DOMAIN_AGE_DECAY_A, DOMAIN_AGE_DECAY_B,
   SCORE_DOMAIN_AGE_BONUS_MAX, DOMAIN_AGE_BONUS_SCORE_THRESHOLD,
   DOMAIN_AGE_BONUS_MIN_DAYS, DOMAIN_AGE_BONUS_MAX_DAYS,
-  EMOJI_PROMO_KEYWORDS, EMOJI_KEYWORD_MATCH_THRESHOLD,
-  EMOJI_MIN_TEXT_LENGTH, EMOJI_DENSITY_MAX_SCORE,
-  EMOJI_DENSITY_THRESHOLD_LOW, EMOJI_DENSITY_THRESHOLD_HIGH,
+  EMOJI_KEYWORD_MATCH_THRESHOLD, EMOJI_MIN_TEXT_LENGTH, EMOJI_DENSITY_MAX_SCORE,
+  EMOJI_DENSITY_THRESHOLD_LOW, EMOJI_DENSITY_THRESHOLD_HIGH, PROMO_KEYWORDS,
   SCORE_DOWNLOAD_BLACKLIST
 } from '../utils/constants.js';
 
@@ -70,12 +69,12 @@ export class ScoringEngine {
       linkMetrics, downloadState, pageMetrics
     } = ctx;
 
-    // 规则一：域名仿冒检测
-    const result1 = this._evaluateRule1(domain);
+    // 规则一：域名仿冒检测（可通过设置关闭）
+    const result1 = s('rule1Enabled', true) ? this._evaluateRule1(domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则一已关闭', detailCN: '域名仿冒: 已关闭' };
     const existingScore = result1.score;
 
-    // 规则三：ICP检测
-    const result3 = this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink, textSignals);
+    // 规则三：ICP检测（可通过设置关闭）
+    const result3 = s('rule3Enabled', true) ? this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink, textSignals) : { score: 0, triggered: false, status: 'disabled', detail: '规则三已关闭', detailCN: 'ICP备案: 已关闭' };
 
     // 优化：域名检测和ICP检测均确认安全 → 跳过规则四/五（官方网站早期退出）
     const isConfirmedOfficial = (
@@ -96,7 +95,7 @@ export class ScoringEngine {
         detailCN: '代码工程化: 官方网站'
       };
     } else {
-      result4 = this._evaluateRule4(linkMetrics, domain);
+      result4 = s('rule4Enabled', true) ? this._evaluateRule4(linkMetrics, domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则四已关闭', detailCN: '链接分析: 已关闭' };
       result5 = this._evaluateRule5(pageMetrics, domain, pageText, textSignals);
     }
 
@@ -111,7 +110,7 @@ export class ScoringEngine {
         fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false
       };
     } else {
-      result2 = await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry);
+      result2 = s('rule2Enabled', true) ? await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry) : { score: 0, triggered: false, status: 'disabled', detail: '规则二已关闭', detailCN: '下载检测: 已关闭', fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false };
     }
 
     // 域名年龄评分（Whois API）：非官方域名时调用，基于注册天数 S 型衰减计分
@@ -126,13 +125,13 @@ export class ScoringEngine {
 
     // 域名年龄减分（Whois API）：仅当初步总分 >= 阈值时应用，基于注册时长抵消可疑性
     let ageBonusResult = { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名减分: 未应用', bonusScore: 0 };
-    if (!isConfirmedOfficial && preliminaryScore >= DOMAIN_AGE_BONUS_SCORE_THRESHOLD) {
+    if (!isConfirmedOfficial && preliminaryScore >= s('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD)) {
       ageBonusResult = await this._evaluateDomainAgeBonus(domain, preliminaryScore, domainAgeResult);
     }
 
     // 最终总分 = 初步总分 - 减分分值（减分用负数表示，相加即为减法）
     const totalScore = preliminaryScore + ageBonusResult.score;
-    const isSuspicious = totalScore >= SCORE_THRESHOLD;
+    const isSuspicious = totalScore >= s('scoreThreshold', SCORE_THRESHOLD);
 
     return {
       totalScore,
@@ -157,17 +156,20 @@ export class ScoringEngine {
    * @returns {Object} { totalScore, isSuspicious, riskLevel, breakdown, matchedEntry, correctUrl, officialName,
    *                     isConfirmedOfficial, preliminaryScore, domainAgeResult, timestamp }
    */
-  static async evaluateSync(ctx) {
+  static async evaluateSync(ctx, settings = null) {
     const {
       url, domain, pageText, icpStrings, hasIcpGovLink,
       linkMetrics, downloadState, pageMetrics
     } = ctx;
 
-    // 规则一：域名仿冒检测
-    const result1 = this._evaluateRule1(domain);
+
+    // 辅助函数：从 settings 获取有效值，未设置时返回默认常量
+    const s = (key, defaultVal) => (settings && settings[key] !== undefined) ? settings[key] : defaultVal;
+    // 规则一：域名仿冒检测（可通过设置关闭）
+    const result1 = s('rule1Enabled', true) ? this._evaluateRule1(domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则一已关闭', detailCN: '域名仿冒: 已关闭' };
     const existingScore = result1.score;
 
-    // 规则三：ICP检测
+    // 规则三：ICP检测（可通过设置关闭）
     const result3 = this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink);
 
     // 官方站点早期退出
@@ -189,8 +191,8 @@ export class ScoringEngine {
         detailCN: '代码工程化: 官方网站'
       };
     } else {
-      result4 = this._evaluateRule4(linkMetrics, domain);
-      result5 = this._evaluateRule5(pageMetrics, domain, pageText);
+      result4 = s('rule4Enabled', true) ? this._evaluateRule4(linkMetrics, domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则四已关闭', detailCN: '链接分析: 已关闭' };
+      result5 = s('rule5Enabled', true) ? this._evaluateRule5(pageMetrics, domain, pageText) : { score: 0, triggered: false, status: 'disabled', detail: '规则五已关闭', detailCN: '代码工程化: 已关闭' };
     }
 
     // 规则二：Phase A 主动扫描 + Phase B 被动检测
@@ -203,7 +205,7 @@ export class ScoringEngine {
         fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false
       };
     } else {
-      result2 = await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry);
+      result2 = s('rule2Enabled', true) ? await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry) : { score: 0, triggered: false, status: 'disabled', detail: '规则二已关闭', detailCN: '下载检测: 已关闭', fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false };
     }
 
     // 域名年龄：从缓存读取（不发起网络请求），供异步阶段复用
@@ -220,8 +222,8 @@ export class ScoringEngine {
     if (!isConfirmedOfficial && domainAgeResultCached && domainAgeResultCached.creationDays >= 0) {
       // 缓存命中：同步计算域名年龄评分
       const x = domainAgeResultCached.creationDays;
-      const denominator = 1 + Math.pow(x / (60 * DOMAIN_AGE_DECAY_B), DOMAIN_AGE_DECAY_A);
-      const rawScore = SCORE_DOMAIN_AGE_MAX / denominator;
+      const denominator = 1 + Math.pow(x / (60 * s('domainAge_decayB', DOMAIN_AGE_DECAY_B)), s('domainAge_decayA', DOMAIN_AGE_DECAY_A));
+      const rawScore = s('domainAge_scoreMax', SCORE_DOMAIN_AGE_MAX) / denominator;
       const score = Math.floor(rawScore);
       if (score > 0) {
         domainAgeResult = {
@@ -240,15 +242,15 @@ export class ScoringEngine {
       }
 
       // 缓存命中时可同步计算减分
-      if (preliminaryScore + domainAgeResult.score >= DOMAIN_AGE_BONUS_SCORE_THRESHOLD) {
+      if (preliminaryScore + domainAgeResult.score >= s('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD)) {
         const creationDays = x;
         let bonusScore = 0;
-        if (creationDays < DOMAIN_AGE_BONUS_MIN_DAYS) {
+        if (creationDays < s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) {
           bonusScore = 0;
-        } else if (creationDays < DOMAIN_AGE_BONUS_MAX_DAYS) {
+        } else if (creationDays < s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS)) {
           bonusScore = Math.floor(
-            SCORE_DOMAIN_AGE_BONUS_MAX * (creationDays - DOMAIN_AGE_BONUS_MIN_DAYS) /
-            (DOMAIN_AGE_BONUS_MAX_DAYS - DOMAIN_AGE_BONUS_MIN_DAYS)
+            SCORE_DOMAIN_AGE_BONUS_MAX * (creationDays - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) /
+            (s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS) - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS))
           );
         } else {
           bonusScore = SCORE_DOMAIN_AGE_BONUS_MAX;
@@ -267,7 +269,7 @@ export class ScoringEngine {
 
     // 最终总分（缓存命中时已含域名年龄，缓存未命中时仅含规则一~五）
     const totalScore = preliminaryScore + domainAgeResult.score + ageBonusResult.score;
-    const isSuspicious = totalScore >= SCORE_THRESHOLD;
+    const isSuspicious = totalScore >= s('scoreThreshold', SCORE_THRESHOLD);
 
     return {
       totalScore,
@@ -298,9 +300,12 @@ export class ScoringEngine {
    * @param {boolean} isConfirmedOfficial - 是否为官方站点
    * @returns {Promise<Object>} { domainAgeResult, ageBonusResult, totalScore, isSuspicious, riskLevel }
    */
-  static async evaluateDomainAgePart(domain, preliminaryScore, syncDomainAgeResult, isConfirmedOfficial) {
+  static async evaluateDomainAgePart(domain, preliminaryScore, syncDomainAgeResult, isConfirmedOfficial, settings = null) {
     let domainAgeResult = syncDomainAgeResult || { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名年龄: 未检测', creationDays: -1 };
     let ageBonusResult = { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名减分: 未应用', bonusScore: 0 };
+
+    // 辅助函数：从 settings 获取有效值
+    const s = (key, defaultVal) => (settings && settings[key] !== undefined) ? settings[key] : defaultVal;
 
     if (isConfirmedOfficial) {
       return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: false, riskLevel: RISK_LEVEL.SAFE };
@@ -320,7 +325,7 @@ export class ScoringEngine {
           detailCN: `域名年龄: API 查询失败${errPhase}`,
           creationDays: -1
         };
-        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= SCORE_THRESHOLD, riskLevel: preliminaryScore >= SCORE_THRESHOLD ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
+        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= s('scoreThreshold', SCORE_THRESHOLD), riskLevel: preliminaryScore >= s('scoreThreshold', SCORE_THRESHOLD) ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
       }
 
       if (whoisResult.creationDays < 0) {
@@ -330,12 +335,12 @@ export class ScoringEngine {
           detailCN: '域名年龄: 注册时间未知',
           creationDays: -1
         };
-        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= SCORE_THRESHOLD, riskLevel: preliminaryScore >= SCORE_THRESHOLD ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
+        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= s('scoreThreshold', SCORE_THRESHOLD), riskLevel: preliminaryScore >= s('scoreThreshold', SCORE_THRESHOLD) ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
       }
 
       const x = whoisResult.creationDays;
-      const denominator = 1 + Math.pow(x / (60 * DOMAIN_AGE_DECAY_B), DOMAIN_AGE_DECAY_A);
-      const rawScore = SCORE_DOMAIN_AGE_MAX / denominator;
+      const denominator = 1 + Math.pow(x / (60 * s('domainAge_decayB', DOMAIN_AGE_DECAY_B)), s('domainAge_decayA', DOMAIN_AGE_DECAY_A));
+      const rawScore = s('domainAge_scoreMax', SCORE_DOMAIN_AGE_MAX) / denominator;
       const score = Math.floor(rawScore);
 
       if (score > 0) {
@@ -359,15 +364,15 @@ export class ScoringEngine {
     const newPreliminaryScore = preliminaryScore - (syncDomainAgeResult.score || 0) + domainAgeResult.score;
 
     // 域名年龄减分
-    if (newPreliminaryScore >= DOMAIN_AGE_BONUS_SCORE_THRESHOLD && domainAgeResult.creationDays >= 0) {
+    if (newPreliminaryScore >= s('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD) && domainAgeResult.creationDays >= 0) {
       const creationDays = domainAgeResult.creationDays;
       let bonusScore = 0;
-      if (creationDays < DOMAIN_AGE_BONUS_MIN_DAYS) {
+      if (creationDays < s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) {
         bonusScore = 0;
-      } else if (creationDays < DOMAIN_AGE_BONUS_MAX_DAYS) {
+      } else if (creationDays < s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS)) {
         bonusScore = Math.floor(
-          SCORE_DOMAIN_AGE_BONUS_MAX * (creationDays - DOMAIN_AGE_BONUS_MIN_DAYS) /
-          (DOMAIN_AGE_BONUS_MAX_DAYS - DOMAIN_AGE_BONUS_MIN_DAYS)
+          s('domainAgeBonus_max', SCORE_DOMAIN_AGE_BONUS_MAX) * (creationDays - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) /
+          (s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS) - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS))
         );
       } else {
         bonusScore = SCORE_DOMAIN_AGE_BONUS_MAX;
@@ -385,7 +390,7 @@ export class ScoringEngine {
     }
 
     const totalScore = newPreliminaryScore + ageBonusResult.score;
-    const isSuspicious = totalScore >= SCORE_THRESHOLD;
+    const isSuspicious = totalScore >= s('scoreThreshold', SCORE_THRESHOLD);
 
     return {
       domainAgeResult,
@@ -1066,7 +1071,7 @@ export class ScoringEngine {
     // 2. 关键词预筛选（大小写不敏感）
     const lowerText = pageText.toLowerCase();
     let keywordMatchCount = 0;
-    for (const kw of EMOJI_PROMO_KEYWORDS) {
+    for (const kw of PROMO_KEYWORDS) {
       if (lowerText.includes(kw.toLowerCase())) {
         keywordMatchCount++;
       }
@@ -1179,8 +1184,8 @@ export class ScoringEngine {
     result.creationDays = x;
 
     // S 型衰减函数：score = floor(MAX / (1 + (x / (60 * b))^a))
-    const denominator = 1 + Math.pow(x / (60 * DOMAIN_AGE_DECAY_B), DOMAIN_AGE_DECAY_A);
-    const rawScore = SCORE_DOMAIN_AGE_MAX / denominator;
+    const denominator = 1 + Math.pow(x / (60 * s('domainAge_decayB', DOMAIN_AGE_DECAY_B)), s('domainAge_decayA', DOMAIN_AGE_DECAY_A));
+    const rawScore = s('domainAge_scoreMax', SCORE_DOMAIN_AGE_MAX) / denominator;
     const score = (x > 365) ? Math.floor(rawScore) : 0;
 
     if (score > 0) {
@@ -1205,7 +1210,7 @@ export class ScoringEngine {
    *   180 ≤ x < 730       → bonus = floor(MAX_BONUS * (x - 180) / (730 - 180))
    *   x ≥ 730             → bonus = MAX_BONUS（长期注册域名获最大减分）
    *
-   * 执行条件：仅当 preliminaryScore >= DOMAIN_AGE_BONUS_SCORE_THRESHOLD 时调用。
+   * 执行条件：仅当 preliminaryScore >= s('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD) 时调用。
    *
    * @param {string} domain        - 当前页面域名
    * @param {number} preliminaryScore - 应用减分前的可疑总分
@@ -1240,7 +1245,7 @@ export class ScoringEngine {
     } else if (x < DOMAIN_AGE_BONUS_MAX_DAYS) {
       bonusScore = Math.floor(
         SCORE_DOMAIN_AGE_BONUS_MAX * (x - DOMAIN_AGE_BONUS_MIN_DAYS) /
-        (DOMAIN_AGE_BONUS_MAX_DAYS - DOMAIN_AGE_BONUS_MIN_DAYS)
+        (s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS) - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS))
       );
     } else {
       bonusScore = SCORE_DOMAIN_AGE_BONUS_MAX;

@@ -192,7 +192,12 @@ export const MSG_TYPES = {
   DOWNLOAD_CONFIRMATION: 'DOWNLOAD_CONFIRMATION',
   GET_DOWNLOAD_BLACKLIST: 'GET_DOWNLOAD_BLACKLIST',
   REMOVE_DOWNLOAD_BLACKLIST: 'REMOVE_DOWNLOAD_BLACKLIST',
-  SUBMIT_REPORT: 'SUBMIT_REPORT'
+  SUBMIT_REPORT: 'SUBMIT_REPORT',
+  SETTINGS_UPDATED: 'SETTINGS_UPDATED',
+  GET_SETTINGS: 'GET_SETTINGS',
+  UPDATE_SETTINGS: 'UPDATE_SETTINGS',
+  BULK_UPDATE_WHITELIST: 'BULK_UPDATE_WHITELIST',
+  CHECK_UPDATE: 'CHECK_UPDATE'
 };
 
 // ==================== 存储键 ====================
@@ -204,7 +209,8 @@ export const STORAGE_KEYS = {
   WHITELIST: 'whitelist',
   DOWNLOAD_BLACKLIST: 'download_blacklist',
   PENDING_DOWNLOADS: 'pending_downloads',
-  USER_REPORTS: 'user_reports'
+  USER_REPORTS: 'user_reports',
+  UPDATE_INFO: 'update_info'
 };
 
 // 缓存有效期（毫秒）
@@ -213,6 +219,13 @@ export const CACHE_TTL = 24 * 60 * 60 * 1000;  // 24小时
 // ==================== 用户上报 → GitHub Issue ====================
 /** Cloudflare Worker 上报代理 URL（部署后替换为实际 URL） */
 export const REPORT_API_URL = 'https://virus-detector-report.lolitide.workers.dev/api/report';
+
+// ==================== 更新检测 ====================
+/** GitHub Releases API（获取最新版本） */
+export const GITHUB_RELEASES_API_URL = 'https://api.github.com/repos/Lolitide/VirusDetector/releases/latest';
+
+/** GitHub Releases 页面（用户手动下载） */
+export const GITHUB_RELEASES_PAGE = 'https://github.com/Lolitide/VirusDetector/releases';
 
 // ==================== RDAP / Whois API 配置 ====================
 /** RDAP IANA 引导文件 URL（TLD → RDAP 服务器映射） */
