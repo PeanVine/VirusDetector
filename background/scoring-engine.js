@@ -54,8 +54,64 @@ import {
   DOMAIN_AGE_BONUS_MIN_DAYS, DOMAIN_AGE_BONUS_MAX_DAYS,
   EMOJI_KEYWORD_MATCH_THRESHOLD, EMOJI_MIN_TEXT_LENGTH, EMOJI_DENSITY_MAX_SCORE,
   EMOJI_DENSITY_THRESHOLD_LOW, EMOJI_DENSITY_THRESHOLD_HIGH, PROMO_KEYWORDS,
-  SCORE_DOWNLOAD_BLACKLIST
+  SCORE_DOWNLOAD_BLACKLIST, SCORE_DOWNLOAD_CROSS_DOMAIN, SCORE_DOWNLOAD_NEW_DOMAIN,
+  DOWNLOAD_VALID_DAYS_THRESHOLD, DOWNLOAD_CREATION_DAYS_THRESHOLD
 } from '../utils/constants.js';
+
+// ==================== 模块级设置解析 ====================
+
+/** 当前活跃的 settings 对象（evaluateSync/evaluateDomainAgePart 调用前设置，调用后恢复） */
+let _activeSettings = null;
+
+/**
+ * 安全地板：关键阈值的最低允许值，防止用户误设导致检测完全失效。
+ * 关闭检测应使用规则启用开关，而非将分值设为 0。
+ */
+const SAFETY_FLOORS = {
+  scoreThreshold: 20,
+  downloadConfirmThreshold: 10,
+  rule1_score: 5,
+  rule2_highScore: 5,
+  rule2_lowScore: 1,
+  rule3_score: 5,
+  rule3_fakeScore: 5,
+  rule4a_samePageScore: 5,
+  rule4a_deadLinkScore: 5,
+  rule4a_duplicateLinkScore: 5,
+  rule4a_downloadBonus: 1,
+  rule4b_downloadBtnScore: 1,
+  rule4b_archiveLinkScore: 1,
+  rule5_fullScore: 5,
+  rule5_partialScore: 3,
+  domainAge_scoreMax: 5,
+  download_blacklistScore: 5,
+  download_crossDomainScore: 1,
+  download_newDomainScore: 1
+};
+
+/**
+ * 从活跃 settings 解析配置值，未设置时回退到默认常量。
+ * 替代原来的局部 `s()` 函数，解决私有方法无法访问调用者局部变量的作用域问题。
+ * 内置安全地板：关键阈值不会被设为低于最低保护值。
+ * @param {string} key - 设置键名
+ * @param {*} defaultVal - 回退默认值
+ */
+function resolveSetting(key, defaultVal) {
+  let value = (_activeSettings && _activeSettings[key] !== undefined) ? _activeSettings[key] : defaultVal;
+  // 安全地板：数值类型的关键阈值不得低于最低保护值
+  if (typeof value === 'number' && SAFETY_FLOORS[key] !== undefined) {
+    value = Math.max(value, SAFETY_FLOORS[key]);
+  }
+  return value;
+}
+
+/**
+ * 设置活跃 settings（供外部模块如 service-worker 在调用私有方法前使用）
+ * @param {Object|null} settings
+ */
+export function setActiveSettings(settings) {
+  _activeSettings = settings;
+}
 
 export class ScoringEngine {
   /**
@@ -70,11 +126,11 @@ export class ScoringEngine {
     } = ctx;
 
     // 规则一：域名仿冒检测（可通过设置关闭）
-    const result1 = s('rule1Enabled', true) ? this._evaluateRule1(domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则一已关闭', detailCN: '域名仿冒: 已关闭' };
+    const result1 = resolveSetting('rule1Enabled', true) ? this._evaluateRule1(domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则一已关闭', detailCN: '域名仿冒: 已关闭' };
     const existingScore = result1.score;
 
     // 规则三：ICP检测（可通过设置关闭）
-    const result3 = s('rule3Enabled', true) ? this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink, textSignals) : { score: 0, triggered: false, status: 'disabled', detail: '规则三已关闭', detailCN: 'ICP备案: 已关闭' };
+    const result3 = resolveSetting('rule3Enabled', true) ? this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink, textSignals) : { score: 0, triggered: false, status: 'disabled', detail: '规则三已关闭', detailCN: 'ICP备案: 已关闭' };
 
     // 优化：域名检测和ICP检测均确认安全 → 跳过规则四/五（官方网站早期退出）
     const isConfirmedOfficial = (
@@ -95,7 +151,7 @@ export class ScoringEngine {
         detailCN: '代码工程化: 官方网站'
       };
     } else {
-      result4 = s('rule4Enabled', true) ? this._evaluateRule4(linkMetrics, domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则四已关闭', detailCN: '链接分析: 已关闭' };
+      result4 = resolveSetting('rule4Enabled', true) ? this._evaluateRule4(linkMetrics, domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则四已关闭', detailCN: '链接分析: 已关闭' };
       result5 = this._evaluateRule5(pageMetrics, domain, pageText, textSignals);
     }
 
@@ -110,7 +166,7 @@ export class ScoringEngine {
         fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false
       };
     } else {
-      result2 = s('rule2Enabled', true) ? await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry) : { score: 0, triggered: false, status: 'disabled', detail: '规则二已关闭', detailCN: '下载检测: 已关闭', fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false };
+      result2 = resolveSetting('rule2Enabled', true) ? await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry) : { score: 0, triggered: false, status: 'disabled', detail: '规则二已关闭', detailCN: '下载检测: 已关闭', fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false };
     }
 
     // 域名年龄评分（Whois API）：非官方域名时调用，基于注册天数 S 型衰减计分
@@ -125,13 +181,13 @@ export class ScoringEngine {
 
     // 域名年龄减分（Whois API）：仅当初步总分 >= 阈值时应用，基于注册时长抵消可疑性
     let ageBonusResult = { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名减分: 未应用', bonusScore: 0 };
-    if (!isConfirmedOfficial && preliminaryScore >= s('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD)) {
+    if (!isConfirmedOfficial && preliminaryScore >= resolveSetting('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD)) {
       ageBonusResult = await this._evaluateDomainAgeBonus(domain, preliminaryScore, domainAgeResult);
     }
 
     // 最终总分 = 初步总分 - 减分分值（减分用负数表示，相加即为减法）
     const totalScore = preliminaryScore + ageBonusResult.score;
-    const isSuspicious = totalScore >= s('scoreThreshold', SCORE_THRESHOLD);
+    const isSuspicious = totalScore >= resolveSetting('scoreThreshold', SCORE_THRESHOLD);
 
     return {
       totalScore,
@@ -163,14 +219,15 @@ export class ScoringEngine {
     } = ctx;
 
 
-    // 辅助函数：从 settings 获取有效值，未设置时返回默认常量
-    const s = (key, defaultVal) => (settings && settings[key] !== undefined) ? settings[key] : defaultVal;
+    // 设置模块级 _activeSettings，使私有方法可通过 resolveSetting() 读取
+    const prevSettings = _activeSettings;
+    _activeSettings = settings;
     // 规则一：域名仿冒检测（可通过设置关闭）
-    const result1 = s('rule1Enabled', true) ? this._evaluateRule1(domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则一已关闭', detailCN: '域名仿冒: 已关闭' };
+    const result1 = resolveSetting('rule1Enabled', true) ? this._evaluateRule1(domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则一已关闭', detailCN: '域名仿冒: 已关闭' };
     const existingScore = result1.score;
 
     // 规则三：ICP检测（可通过设置关闭）
-    const result3 = this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink);
+    const result3 = resolveSetting('rule3Enabled', true) ? this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink) : { score: 0, triggered: false, status: 'disabled', detail: '规则三已关闭', detailCN: 'ICP备案: 已关闭' };
 
     // 官方站点早期退出
     const isConfirmedOfficial = (
@@ -191,8 +248,8 @@ export class ScoringEngine {
         detailCN: '代码工程化: 官方网站'
       };
     } else {
-      result4 = s('rule4Enabled', true) ? this._evaluateRule4(linkMetrics, domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则四已关闭', detailCN: '链接分析: 已关闭' };
-      result5 = s('rule5Enabled', true) ? this._evaluateRule5(pageMetrics, domain, pageText) : { score: 0, triggered: false, status: 'disabled', detail: '规则五已关闭', detailCN: '代码工程化: 已关闭' };
+      result4 = resolveSetting('rule4Enabled', true) ? this._evaluateRule4(linkMetrics, domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则四已关闭', detailCN: '链接分析: 已关闭' };
+      result5 = resolveSetting('rule5Enabled', true) ? this._evaluateRule5(pageMetrics, domain, pageText) : { score: 0, triggered: false, status: 'disabled', detail: '规则五已关闭', detailCN: '代码工程化: 已关闭' };
     }
 
     // 规则二：Phase A 主动扫描 + Phase B 被动检测
@@ -205,7 +262,7 @@ export class ScoringEngine {
         fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false
       };
     } else {
-      result2 = s('rule2Enabled', true) ? await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry) : { score: 0, triggered: false, status: 'disabled', detail: '规则二已关闭', detailCN: '下载检测: 已关闭', fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false };
+      result2 = resolveSetting('rule2Enabled', true) ? await this._evaluateRule2(downloadState, linkMetrics, existingScore, result1.matchedEntry) : { score: 0, triggered: false, status: 'disabled', detail: '规则二已关闭', detailCN: '下载检测: 已关闭', fileName: null, proactiveHits: 0, proactiveScore: 0, reactiveTriggered: false };
     }
 
     // 域名年龄：从缓存读取（不发起网络请求），供异步阶段复用
@@ -222,8 +279,8 @@ export class ScoringEngine {
     if (!isConfirmedOfficial && domainAgeResultCached && domainAgeResultCached.creationDays >= 0) {
       // 缓存命中：同步计算域名年龄评分
       const x = domainAgeResultCached.creationDays;
-      const denominator = 1 + Math.pow(x / (60 * s('domainAge_decayB', DOMAIN_AGE_DECAY_B)), s('domainAge_decayA', DOMAIN_AGE_DECAY_A));
-      const rawScore = s('domainAge_scoreMax', SCORE_DOMAIN_AGE_MAX) / denominator;
+      const denominator = 1 + Math.pow(x / (60 * resolveSetting('domainAge_decayB', DOMAIN_AGE_DECAY_B)), resolveSetting('domainAge_decayA', DOMAIN_AGE_DECAY_A));
+      const rawScore = resolveSetting('domainAge_scoreMax', SCORE_DOMAIN_AGE_MAX) / denominator;
       const score = Math.floor(rawScore);
       if (score > 0) {
         domainAgeResult = {
@@ -242,15 +299,15 @@ export class ScoringEngine {
       }
 
       // 缓存命中时可同步计算减分
-      if (preliminaryScore + domainAgeResult.score >= s('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD)) {
+      if (preliminaryScore + domainAgeResult.score >= resolveSetting('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD)) {
         const creationDays = x;
         let bonusScore = 0;
-        if (creationDays < s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) {
+        if (creationDays < resolveSetting('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) {
           bonusScore = 0;
-        } else if (creationDays < s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS)) {
+        } else if (creationDays < resolveSetting('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS)) {
           bonusScore = Math.floor(
-            SCORE_DOMAIN_AGE_BONUS_MAX * (creationDays - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) /
-            (s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS) - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS))
+            SCORE_DOMAIN_AGE_BONUS_MAX * (creationDays - resolveSetting('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) /
+            (resolveSetting('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS) - resolveSetting('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS))
           );
         } else {
           bonusScore = SCORE_DOMAIN_AGE_BONUS_MAX;
@@ -269,7 +326,7 @@ export class ScoringEngine {
 
     // 最终总分（缓存命中时已含域名年龄，缓存未命中时仅含规则一~五）
     const totalScore = preliminaryScore + domainAgeResult.score + ageBonusResult.score;
-    const isSuspicious = totalScore >= s('scoreThreshold', SCORE_THRESHOLD);
+    const isSuspicious = totalScore >= resolveSetting('scoreThreshold', SCORE_THRESHOLD);
 
     return {
       totalScore,
@@ -288,6 +345,7 @@ export class ScoringEngine {
       _syncDomainAgeResult: domainAgeResult,
       timestamp: Date.now()
     };
+    _activeSettings = prevSettings;
   }
 
   /**
@@ -304,8 +362,9 @@ export class ScoringEngine {
     let domainAgeResult = syncDomainAgeResult || { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名年龄: 未检测', creationDays: -1 };
     let ageBonusResult = { score: 0, triggered: false, status: 'pass', detail: '', detailCN: '域名减分: 未应用', bonusScore: 0 };
 
-    // 辅助函数：从 settings 获取有效值
-    const s = (key, defaultVal) => (settings && settings[key] !== undefined) ? settings[key] : defaultVal;
+    // 设置模块级 _activeSettings
+    const prevSettings = _activeSettings;
+    _activeSettings = settings;
 
     if (isConfirmedOfficial) {
       return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: false, riskLevel: RISK_LEVEL.SAFE };
@@ -325,7 +384,7 @@ export class ScoringEngine {
           detailCN: `域名年龄: API 查询失败${errPhase}`,
           creationDays: -1
         };
-        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= s('scoreThreshold', SCORE_THRESHOLD), riskLevel: preliminaryScore >= s('scoreThreshold', SCORE_THRESHOLD) ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
+        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= resolveSetting('scoreThreshold', SCORE_THRESHOLD), riskLevel: preliminaryScore >= resolveSetting('scoreThreshold', SCORE_THRESHOLD) ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
       }
 
       if (whoisResult.creationDays < 0) {
@@ -335,12 +394,12 @@ export class ScoringEngine {
           detailCN: '域名年龄: 注册时间未知',
           creationDays: -1
         };
-        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= s('scoreThreshold', SCORE_THRESHOLD), riskLevel: preliminaryScore >= s('scoreThreshold', SCORE_THRESHOLD) ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
+        return { domainAgeResult, ageBonusResult, totalScore: preliminaryScore, isSuspicious: preliminaryScore >= resolveSetting('scoreThreshold', SCORE_THRESHOLD), riskLevel: preliminaryScore >= resolveSetting('scoreThreshold', SCORE_THRESHOLD) ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE };
       }
 
       const x = whoisResult.creationDays;
-      const denominator = 1 + Math.pow(x / (60 * s('domainAge_decayB', DOMAIN_AGE_DECAY_B)), s('domainAge_decayA', DOMAIN_AGE_DECAY_A));
-      const rawScore = s('domainAge_scoreMax', SCORE_DOMAIN_AGE_MAX) / denominator;
+      const denominator = 1 + Math.pow(x / (60 * resolveSetting('domainAge_decayB', DOMAIN_AGE_DECAY_B)), resolveSetting('domainAge_decayA', DOMAIN_AGE_DECAY_A));
+      const rawScore = resolveSetting('domainAge_scoreMax', SCORE_DOMAIN_AGE_MAX) / denominator;
       const score = Math.floor(rawScore);
 
       if (score > 0) {
@@ -364,15 +423,15 @@ export class ScoringEngine {
     const newPreliminaryScore = preliminaryScore - (syncDomainAgeResult.score || 0) + domainAgeResult.score;
 
     // 域名年龄减分
-    if (newPreliminaryScore >= s('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD) && domainAgeResult.creationDays >= 0) {
+    if (newPreliminaryScore >= resolveSetting('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD) && domainAgeResult.creationDays >= 0) {
       const creationDays = domainAgeResult.creationDays;
       let bonusScore = 0;
-      if (creationDays < s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) {
+      if (creationDays < resolveSetting('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) {
         bonusScore = 0;
-      } else if (creationDays < s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS)) {
+      } else if (creationDays < resolveSetting('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS)) {
         bonusScore = Math.floor(
-          s('domainAgeBonus_max', SCORE_DOMAIN_AGE_BONUS_MAX) * (creationDays - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) /
-          (s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS) - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS))
+          resolveSetting('domainAgeBonus_max', SCORE_DOMAIN_AGE_BONUS_MAX) * (creationDays - resolveSetting('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS)) /
+          (resolveSetting('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS) - resolveSetting('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS))
         );
       } else {
         bonusScore = SCORE_DOMAIN_AGE_BONUS_MAX;
@@ -390,7 +449,7 @@ export class ScoringEngine {
     }
 
     const totalScore = newPreliminaryScore + ageBonusResult.score;
-    const isSuspicious = totalScore >= s('scoreThreshold', SCORE_THRESHOLD);
+    const isSuspicious = totalScore >= resolveSetting('scoreThreshold', SCORE_THRESHOLD);
 
     return {
       domainAgeResult,
@@ -399,6 +458,7 @@ export class ScoringEngine {
       isSuspicious,
       riskLevel: isSuspicious ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE
     };
+    _activeSettings = prevSettings;
   }
 
   // ==================== 规则一：域名仿冒 (60分) ====================
@@ -437,7 +497,7 @@ export class ScoringEngine {
     // 检测域名仿冒（使用完整 hostname，子域名中可能含品牌关键词）
     const spoof = DomainDatabase.detectSpoof(domain);
     if (spoof) {
-      result.score = SCORE_RULE_1;  // +60
+      result.score = resolveSetting('rule1_score', SCORE_RULE_1);  // +60
       result.triggered = true;
       result.matchedEntry = spoof.entry;
       result.correctUrl = spoof.correctUrl;
@@ -563,8 +623,8 @@ export class ScoringEngine {
 
         // 官网劫持加分：每个非官方下载链接 +30（硬上限 60），不参与批量/嫌疑加权
         let hijackScore = 0;
-        if (hijackCount > 0) {
-          hijackScore = Math.min(hijackCount * SCORE_RULE_2_HIJACK, 60);
+        if (resolveSetting('hijackDetection', true) && hijackCount > 0) {
+          hijackScore = Math.min(hijackCount * resolveSetting('rule2_hijackScore', SCORE_RULE_2_HIJACK), 60);
         }
 
         // 3. 批量加权：≥阈值时基础分翻倍（仅 baseScore 参与，hijackScore/blacklistBonus 独立）
@@ -626,9 +686,9 @@ export class ScoringEngine {
 
       let reactiveScore;
       if (existingSuspicionScore >= RULE_2_DOMAIN_SUSPICION_THRESHOLD) {
-        reactiveScore = SCORE_RULE_2_HIGH;  // +40
+        reactiveScore = resolveSetting('rule2_highScore', SCORE_RULE_2_HIGH);  // +40
       } else {
-        reactiveScore = SCORE_RULE_2_LOW;   // +10
+        reactiveScore = resolveSetting('rule2_lowScore', SCORE_RULE_2_LOW);   // +10
       }
 
       // Phase B 可以覆盖 Phase A（实际下载是更强信号）
@@ -707,7 +767,7 @@ export class ScoringEngine {
         result.detailCN = `ICP备案: 虚假/未核验（${reason}）`;
         return result;
       } else {
-        result.score = SCORE_RULE_3_FAKE;  // +30 — 无中文但显示了虚假备案号
+        result.score = resolveSetting('rule3_fakeScore', SCORE_RULE_3_FAKE);  // +30 — 无中文但显示了虚假备案号
         result.triggered = true;
         let reason = result.icpBlacklisted ? '备案号疑似虚假' : '备案号缺少可点击核验链接';
         result.detail = `ICP备案疑似虚假（域名${domain}，${reason}，页面无中文内容）`;
@@ -913,7 +973,9 @@ export class ScoringEngine {
     }
 
     // ---- 子规则 B：关键词预筛选 + Emoji 密度检测（独立于三信号体系） ----
-    const emojiDensityResult = this._evaluateRule5EmojiDensity(pageText, textSignals);
+    const emojiDensityResult = resolveSetting('emojiDensityCheck', true)
+      ? this._evaluateRule5EmojiDensity(pageText, textSignals)
+      : { score: 0, triggered: false, status: 'disabled', detail: 'Emoji密度检测已关闭', detailCN: 'Emoji密度: 已关闭', density: 0 };
 
     // ---- 子规则 A：结构信号组合判定 ----
     let signalScore = 0;
@@ -954,13 +1016,13 @@ export class ScoringEngine {
       const signalCount = signals.length;
 
       // 组合判定
-      if (signalCount >= AI_PAGE_THRESHOLDS.RULE_5_SIGNALS_FULL) {
-        signalScore = SCORE_RULE_5;
+      if (signalCount >= resolveSetting('code_signalsFull', AI_PAGE_THRESHOLDS.RULE_5_SIGNALS_FULL)) {
+        signalScore = resolveSetting('rule5_fullScore', SCORE_RULE_5);
         signalTriggered = true;
         signalDetail = `代码工程质量差(${signalCount}个结构信号): ${signals.join('; ')}`;
         signalDetailCN = `代码工程化: 高度可疑 (${signals.join(', ')})`;
-      } else if (signalCount >= AI_PAGE_THRESHOLDS.RULE_5_SIGNALS_PARTIAL) {
-        signalScore = SCORE_RULE_5_PARTIAL;
+      } else if (signalCount >= resolveSetting('code_signalsPartial', AI_PAGE_THRESHOLDS.RULE_5_SIGNALS_PARTIAL)) {
+        signalScore = resolveSetting('rule5_partialScore', SCORE_RULE_5_PARTIAL);
         signalTriggered = true;
         signalDetail = `代码工程化弱信号(${signalCount}个结构信号): ${signals.join('; ')}`;
         signalDetailCN = `代码工程化: 中度可疑 (${signals.join(', ')})`;
@@ -1034,7 +1096,7 @@ export class ScoringEngine {
 
     if (textSignals && typeof textSignals === 'object') {
       const textLength = Number(textSignals.textLength || 0);
-      if (textLength < EMOJI_MIN_TEXT_LENGTH) {
+      if (textLength < resolveSetting('emoji_minTextLength', EMOJI_MIN_TEXT_LENGTH)) {
         result.detail = `页面文本不足${EMOJI_MIN_TEXT_LENGTH}字符，跳过Emoji密度检测`;
         result.detailCN = 'Emoji密度: 文本不足';
         return result;
@@ -1042,7 +1104,7 @@ export class ScoringEngine {
 
       const keywordMatchCount = Number(textSignals.promoKeywordMatchCount || 0);
       result.keywordMatchCount = keywordMatchCount;
-      if (keywordMatchCount < EMOJI_KEYWORD_MATCH_THRESHOLD) {
+      if (keywordMatchCount < resolveSetting('emoji_keywordMatchThreshold', EMOJI_KEYWORD_MATCH_THRESHOLD)) {
         result.detail = `推广关键词匹配${keywordMatchCount}个，未达阈值${EMOJI_KEYWORD_MATCH_THRESHOLD}，跳过Emoji密度检测`;
         result.detailCN = 'Emoji密度: 非推广页面';
         return result;
@@ -1078,7 +1140,7 @@ export class ScoringEngine {
     }
     result.keywordMatchCount = keywordMatchCount;
 
-    if (keywordMatchCount < EMOJI_KEYWORD_MATCH_THRESHOLD) {
+    if (keywordMatchCount < resolveSetting('emoji_keywordMatchThreshold', EMOJI_KEYWORD_MATCH_THRESHOLD)) {
       result.detail = `推广关键词匹配${keywordMatchCount}个，未达阈值${EMOJI_KEYWORD_MATCH_THRESHOLD}，跳过Emoji密度检测`;
       result.detailCN = 'Emoji密度: 非推广页面';
       return result;
@@ -1116,7 +1178,7 @@ export class ScoringEngine {
         (EMOJI_DENSITY_THRESHOLD_HIGH - EMOJI_DENSITY_THRESHOLD_LOW) *
         EMOJI_DENSITY_MAX_SCORE;
     } else {
-      emojiDensityScore = EMOJI_DENSITY_MAX_SCORE;
+      emojiDensityScore = resolveSetting('emoji_densityMaxScore', EMOJI_DENSITY_MAX_SCORE);
     }
 
     emojiDensityScore = Math.floor(emojiDensityScore);
@@ -1184,8 +1246,8 @@ export class ScoringEngine {
     result.creationDays = x;
 
     // S 型衰减函数：score = floor(MAX / (1 + (x / (60 * b))^a))
-    const denominator = 1 + Math.pow(x / (60 * s('domainAge_decayB', DOMAIN_AGE_DECAY_B)), s('domainAge_decayA', DOMAIN_AGE_DECAY_A));
-    const rawScore = s('domainAge_scoreMax', SCORE_DOMAIN_AGE_MAX) / denominator;
+    const denominator = 1 + Math.pow(x / (60 * resolveSetting('domainAge_decayB', DOMAIN_AGE_DECAY_B)), resolveSetting('domainAge_decayA', DOMAIN_AGE_DECAY_A));
+    const rawScore = resolveSetting('domainAge_scoreMax', SCORE_DOMAIN_AGE_MAX) / denominator;
     const score = (x > 365) ? Math.floor(rawScore) : 0;
 
     if (score > 0) {
@@ -1210,7 +1272,7 @@ export class ScoringEngine {
    *   180 ≤ x < 730       → bonus = floor(MAX_BONUS * (x - 180) / (730 - 180))
    *   x ≥ 730             → bonus = MAX_BONUS（长期注册域名获最大减分）
    *
-   * 执行条件：仅当 preliminaryScore >= s('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD) 时调用。
+   * 执行条件：仅当 preliminaryScore >= resolveSetting('domainAgeBonus_scoreThreshold', DOMAIN_AGE_BONUS_SCORE_THRESHOLD) 时调用。
    *
    * @param {string} domain        - 当前页面域名
    * @param {number} preliminaryScore - 应用减分前的可疑总分
@@ -1245,7 +1307,7 @@ export class ScoringEngine {
     } else if (x < DOMAIN_AGE_BONUS_MAX_DAYS) {
       bonusScore = Math.floor(
         SCORE_DOMAIN_AGE_BONUS_MAX * (x - DOMAIN_AGE_BONUS_MIN_DAYS) /
-        (s('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS) - s('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS))
+        (resolveSetting('domainAgeBonus_maxDays', DOMAIN_AGE_BONUS_MAX_DAYS) - resolveSetting('domainAgeBonus_minDays', DOMAIN_AGE_BONUS_MIN_DAYS))
       );
     } else {
       bonusScore = SCORE_DOMAIN_AGE_BONUS_MAX;
@@ -1350,7 +1412,7 @@ export class ScoringEngine {
 
     if (whoisResult && whoisResult.creationDays >= 0 && whoisResult.validDays >= 0) {
       // 条件：valid_days < 365 且 creation_days < 90 → 新注册域名额外加分
-      if (whoisResult.validDays < 365 && whoisResult.creationDays < 90) {
+      if (whoisResult.validDays < resolveSetting('download_validDaysThreshold', DOWNLOAD_VALID_DAYS_THRESHOLD) && whoisResult.creationDays < resolveSetting('download_creationDaysThreshold', DOWNLOAD_CREATION_DAYS_THRESHOLD)) {
         result.score += 10;
         result.detail += `，新注册域名（注册${whoisResult.creationDays}天，剩余${whoisResult.validDays}天）再+10`;
         result.detailCN += `，新注册域名 +10（${whoisResult.creationDays}天）`;

@@ -918,11 +918,9 @@
     }, delayMs);
   }
 
-  function init() {
-    // 异步读取用户设置中的 checkDeadLinks 偏好
-    getCheckDeadLinksSetting().then(function(checkDeadLinks) {
-      _cachedCheckDeadLinks = checkDeadLinks;
-    });
+  async function init() {
+    // 先读取用户设置中的 checkDeadLinks 偏好，再开始扫描
+    _cachedCheckDeadLinks = await getCheckDeadLinksSetting();
     scheduleAnalysis(600, { checkDeadLinks: _cachedCheckDeadLinks });
     // 二次扫描用于捕获懒加载内容，但跳过 HEAD 死链验证以降低页面和网络成本。
     scheduleAnalysis(3500, { checkDeadLinks: false });

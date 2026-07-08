@@ -20,7 +20,7 @@
  *   - 5 秒冷却期内不重复触发警告（同标签页 / 同域名）
  */
 
-import { ScoringEngine } from './scoring-engine.js';
+import { ScoringEngine, setActiveSettings } from './scoring-engine.js';
 import { DomainDatabase } from './domain-database.js';
 import { CacheManager } from './cache-manager.js';
 import { DownloadBlacklist } from './download-blacklist.js';
@@ -419,29 +419,37 @@ async function triggerWarningFlow(tabId, tabState) {
   }
 
   // 3. 注入下载拦截脚本（仅首次，传入已知压缩包链接进行精准拦截）
-  await injectDownloadBlocker(tabId, archiveUrls);
+  const settings = await getSettings();
+  if (settings.downloadInjection !== false) {
+    await injectDownloadBlocker(tabId, archiveUrls);
+  }
 
   // 去重检查：同标签页冷却期内跳过通知和弹窗
+  const cooldownMs = getEffectiveThreshold('warning_cooldownMs', WARNING_COOLDOWN_MS);
   const lastTime = _warningCooldown.get(tabId) || 0;
-  if (now - lastTime < WARNING_COOLDOWN_MS) {
+  if (now - lastTime < cooldownMs) {
     console.log('[ServiceWorker] ⚠️ 冷却期内，跳过重复弹窗:', domain);
     return;
   }
   _warningCooldown.set(tabId, now);
 
-  // 3. 桌面通知
-  chrome.notifications.create({
-    type: 'basic',
-    iconUrl: 'icons/icon128.png',
-    title: '⚠️ 银狐木马检测 - 风险警告',
-    message: `检测到疑似钓鱼网站: ${domain}\n风险评分: ${score}分${correctUrl ? '\n正确官网: ' + correctUrl : ''}`,
-    priority: 2,
-    buttons: correctUrl ? [{ title: '✅ 前往官网' }] : [],
-    requireInteraction: true
-  }).catch(() => {});
+  // 3. 桌面通知（可通过设置关闭）
+  if (settings.desktopNotifications !== false) {
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: 'icons/icon128.png',
+      title: '⚠️ 银狐木马检测 - 风险警告',
+      message: `检测到疑似钓鱼网站: ${domain}\n风险评分: ${score}分${correctUrl ? '\n正确官网: ' + correctUrl : ''}`,
+      priority: 2,
+      buttons: correctUrl ? [{ title: '✅ 前往官网' }] : [],
+      requireInteraction: true
+    }).catch(() => {});
+  }
 
-  // 4. 创建警告窗口（同域名去重）
-  openWarningWindow(tabState);
+  // 4. 创建警告窗口（可通过设置关闭）
+  if (settings.showWarningWindow !== false) {
+    openWarningWindow(tabState);
+  }
 
   console.log('[ServiceWorker] ⚠️ 高危响应已触发:', { domain, score, correctUrl });
 }
@@ -1137,6 +1145,8 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     // 获取规则一的仿冒匹配结果（用于官网劫持检测）
     const matchedEntry = (tabState.ruleResults && tabState.ruleResults.rule1)
       ? tabState.ruleResults.rule1.matchedEntry || null : null;
+    const dlSettings = await getSettings();
+    setActiveSettings(dlSettings);
     const rule2Result = await ScoringEngine._evaluateRule2(
       tabState.downloadState, tabState.linkMetrics, existingScore, matchedEntry
     );
@@ -1511,11 +1521,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           console.log('[ServiceWorker] 用户上报已保存:', reportType, domain);
 
           // 异步 POST 到 Cloudflare Worker → 创建 GitHub Issue（fire-and-forget，不阻塞响应）
-          _postReportToWorker(reportType, domain, note);
+          const reportSettings = await getSettings();
+          if (reportSettings.allowAnonymousReporting !== false) {
+            _postReportToWorker(reportType, domain, note);
+          }
 
           // 自动操作：误报 → 加白名单；确认钓鱼 → 加下载黑名单（如果页面上有可疑下载域名）
           if (reportType === 'false_positive') {
-            await addToWhitelist('https://' + domain);
+            if (reportSettings.autoWhitelistFalsePositive !== false) {
+              await addToWhitelist('https://' + domain);
+            }
             // 清除该域名的缓存
             await CacheManager.remove(domain);
             // 更新当前活跃标签页状态

@@ -19,7 +19,7 @@ class SettingsApp {
     /** @type {string} 当前显示的 section ID */
     this._activeSection = 'general';
     /** @type {'basic'|'advanced'} 当前模式 */
-    this._mode = 'basic';
+    this._mode = 'basic';  // 'basic' | 'advanced' | 'developer'
     /** @type {boolean} 是否有未保存的更改 */
     this._dirty = false;
     /** @type {Object} 灵敏度预设应用时的覆盖层 */
@@ -94,6 +94,14 @@ class SettingsApp {
 
   // ==================== 渲染 ====================
 
+  /** 判断给定 mode 的项在当前用户模式下是否可见 */
+  _isVisible(itemMode) {
+    if (itemMode === 'hidden') return false;
+    if (this._mode === 'basic') return itemMode === 'basic';
+    if (this._mode === 'advanced') return itemMode === 'basic' || itemMode === 'advanced';
+    return true; // developer mode: 显示全部
+  }
+
   /** 渲染侧栏导航（根据当前模式过滤） */
   _renderSidebar() {
     const nav = document.getElementById('sidebar-nav');
@@ -101,8 +109,7 @@ class SettingsApp {
 
     nav.innerHTML = '';
     for (const section of SECTIONS) {
-      // 基础模式下隐藏 advanced 节
-      if (this._mode === 'basic' && section.mode === 'advanced') continue;
+      if (!this._isVisible(section.mode)) continue;
 
       const item = document.createElement('a');
       item.className = 'nav-item' + (section.id === this._activeSection ? ' active' : '');
@@ -156,14 +163,13 @@ class SettingsApp {
 
     for (const group of section.groups) {
       // 过滤模式
-      if (this._mode === 'basic' && group.mode === 'advanced') continue;
+      if (!this._isVisible(group.mode)) continue;
 
       html += `<div class="settings-card">
         <div class="settings-card-title">${group.label}</div>`;
 
       for (const setting of group.settings) {
-        // 过滤模式
-        if (this._mode === 'basic' && setting.mode === 'advanced') continue;
+        if (!this._isVisible(setting.mode)) continue;
 
         html += this._buildSettingRow(setting);
       }
@@ -465,21 +471,23 @@ class SettingsApp {
   // ==================== 模式切换 ====================
 
   _toggleMode() {
-    this._mode = this._mode === 'basic' ? 'advanced' : 'basic';
+    // 三向循环：basic → advanced → developer → basic
+    if (this._mode === 'basic') this._mode = 'advanced';
+    else if (this._mode === 'advanced') this._mode = 'developer';
+    else this._mode = 'basic';
     this._applyModeToDom();
     this._renderSidebar();
     this._renderSection(this._activeSection);
-    this._showToast(
-      this._mode === 'advanced' ? '已切换到高级模式' : '已切换到基础模式',
-      'info'
-    );
+    const labels = { basic: '基础模式', advanced: '高级模式', developer: '开发者模式' };
+    this._showToast('已切换到' + labels[this._mode], 'info');
   }
 
   _applyModeToDom() {
     document.documentElement.dataset.mode = this._mode;
     const toggleText = document.getElementById('mode-toggle-text');
     if (toggleText) {
-      toggleText.textContent = this._mode === 'basic' ? '高级模式' : '基础模式';
+      const nextLabels = { basic: '高级模式', advanced: '开发者模式', developer: '基础模式' };
+      toggleText.textContent = nextLabels[this._mode];
     }
   }
 
@@ -563,7 +571,7 @@ class SettingsApp {
     try {
       const all = await chrome.storage.local.get(null);
       const keysToRemove = Object.keys(all).filter(k =>
-        k.startsWith('domain_cache_') || k.startsWith('ssl_cache_')
+        k.startsWith('domain_cache_')
       );
       if (keysToRemove.length > 0) {
         await chrome.storage.local.remove(keysToRemove);
@@ -1184,7 +1192,7 @@ SettingsApp.prototype._loadStorageStats = async function () {
     const percent = ((bytesInUse / quota) * 100).toFixed(1);
 
     const cacheKeys = Object.keys(all).filter(k =>
-      k.startsWith('domain_cache_') || k.startsWith('ssl_cache_')
+      k.startsWith('domain_cache_')
     );
     const tabStateKeys = Object.keys(all).filter(k => k.startsWith('tab_state_'));
     const whitelist = all[STORAGE_KEYS.WHITELIST] || [];
@@ -1204,7 +1212,7 @@ SettingsApp.prototype._loadStorageStats = async function () {
       <div class="about-row"><span class="about-label">缓存记录</span><span class="about-value">${cacheKeys.length} 条</span></div>
       <div class="about-row"><span class="about-label">标签页状态</span><span class="about-value">${tabStateKeys.length} 个</span></div>
       <div class="about-row"><span class="about-label">白名单域名</span><span class="about-value">${Array.isArray(whitelist) ? whitelist.length : 0} 个</span></div>
-      <div class="about-row"><span class="about-label">下载黑名单</span><span class="about-value">${Array.isArray(blacklist) ? blacklist.length : 0} 条</span></div>
+      <div class="about-row"><span class="about-label">下载黑名单</span><span class="about-value">${typeof blacklist === 'object' ? Object.keys(blacklist).length : 0} 条</span></div>
       <div class="about-row"><span class="about-label">上报记录</span><span class="about-value">${Array.isArray(reports) ? reports.length : 0} 条</span></div>
     `;
   } catch (e) {
