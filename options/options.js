@@ -14,14 +14,10 @@ class SettingsApp {
   constructor() {
     /** @type {Object} 当前设置（运行时状态） */
     this.settings = { ...SETTINGS_DEFAULTS };
-    /** @type {Object|null} 保存时的快照（用于脏检测） */
-    this._originalSettings = null;
     /** @type {string} 当前显示的 section ID */
     this._activeSection = 'general';
     /** @type {'basic'|'advanced'} 当前模式 */
     this._mode = 'basic';  // 'basic' | 'advanced' | 'developer'
-    /** @type {boolean} 是否有未保存的更改 */
-    this._dirty = false;
     /** @type {Object} 灵敏度预设应用时的覆盖层 */
     this._presetOverrides = {};
     /** @type {boolean} 灵敏度预设是否正在应用（防止循环更新） */
@@ -32,11 +28,10 @@ class SettingsApp {
 
   async init() {
     await this._loadSettings();
-    this._originalSettings = JSON.parse(JSON.stringify(this.settings));
+    this._applyTheme();
     this._renderSidebar();
     this._renderSection(this._activeSection);
     this._bindEvents();
-    this._applyTheme();
     this._applyModeToDom();
 
     console.log('[Settings] 设置页已初始化, schemaVersion:', SCHEMA_VERSION);
@@ -50,6 +45,8 @@ class SettingsApp {
       const stored = r[STORAGE_KEYS.GLOBAL_SETTINGS] || {};
       // 合并：新键用默认值，已存储的键覆盖默认值
       this.settings = { ...SETTINGS_DEFAULTS, ...stored };
+      // 同步 localStorage 主题镜像（确保后续页面加载无闪烁）
+      try { localStorage.setItem('vt_theme', this.settings.theme || 'dark'); } catch(e) {}
       // Schema 迁移检测
       if (stored._schemaVersion !== SCHEMA_VERSION) {
         console.log('[Settings] Schema 版本变更:', stored._schemaVersion, '→', SCHEMA_VERSION);
@@ -69,12 +66,10 @@ class SettingsApp {
     };
     try {
       await chrome.storage.local.set({ [STORAGE_KEYS.GLOBAL_SETTINGS]: toStore });
-      this._originalSettings = JSON.parse(JSON.stringify(this.settings));
-      this._dirty = false;
-      this._hideUnsavedBanner();
+      // 同步写入 localStorage 以便页面加载时无闪烁读取主题
+      try { localStorage.setItem('vt_theme', this.settings.theme || 'dark'); } catch(e) {}
       this._broadcastUpdate();
-      this._showToast('设置已保存', 'success');
-      console.log('[Settings] 设置已保存');
+      console.log('[Settings] 已自动保存');
     } catch (e) {
       console.error('[Settings] 保存失败:', e);
       this._showToast('保存失败: ' + e.message, 'error');
@@ -125,8 +120,11 @@ class SettingsApp {
     }
   }
 
-  /** 渲染指定 section 的内容 */
-  _renderSection(sectionId) {
+  /** 渲染指定 section 的内容
+   * @param {string} sectionId
+   * @param {boolean} [skipAnimation] 跳过淡入动画（灵敏度变更等内部刷新时使用）
+   */
+  _renderSection(sectionId, skipAnimation) {
     const section = SECTIONS.find(s => s.id === sectionId);
     if (!section) return;
 
@@ -153,8 +151,9 @@ class SettingsApp {
       return;
     }
 
+    const animClass = skipAnimation ? ' section-no-anim' : '';
     let html = `
-      <div class="section active">
+      <div class="section active${animClass}">
         <div class="section-header">
           <div class="section-title">${section.label}</div>
           <div class="section-desc">${section.description}</div>
@@ -165,8 +164,8 @@ class SettingsApp {
       // 过滤模式
       if (!this._isVisible(group.mode)) continue;
 
-      html += `<div class="settings-card">
-        <div class="settings-card-title">${group.label}</div>`;
+      html += `<div class="settings-card" id="card-${group.id}">
+        <div class="settings-card-title">${group.iconSVG ? '<span class="card-title-icon">' + group.iconSVG + '</span>' : ''}${group.label}</div>`;
 
       for (const setting of group.settings) {
         if (!this._isVisible(setting.mode)) continue;
@@ -203,6 +202,48 @@ class SettingsApp {
                   ${value ? 'checked' : ''}>
                 <span class="toggle-slider"></span>
               </label>
+            </div>
+          </div>`;
+
+      case 'theme':
+        return `
+          <div class="setting-row theme-setting-row" data-key="${setting.key}" data-mode="${setting.mode || 'basic'}">
+            <div class="setting-info">
+              <div class="setting-label">${setting.label}</div>
+              <div class="setting-desc">${setting.desc}</div>
+            </div>
+            <div class="setting-control">
+              <label class="toggle theme-toggle">
+                <input type="checkbox" class="setting-input" data-key="${setting.key}" data-type="theme"
+                  ${value === 'light' ? 'checked' : ''}>
+                <span class="toggle-slider"></span>
+                <span class="theme-icon theme-icon-sun">☀️</span>
+                <span class="theme-icon theme-icon-moon">🌙</span>
+              </label>
+            </div>
+          </div>`;
+
+      case 'preset':
+        const presetValue = value || 'medium';
+        const steps = ['low', 'medium', 'high'];
+        const labels = { low: '低', medium: '中', high: '高' };
+        const descs = { low: '仅高风险', medium: '均衡检测', high: '最严格' };
+        return `
+          <div class="setting-row" data-key="${setting.key}" data-mode="${setting.mode || 'basic'}">
+            <div class="setting-info">
+              <div class="setting-label">${setting.label}</div>
+              <div class="setting-desc">${setting.desc}</div>
+            </div>
+            <div class="setting-control" style="flex:1;max-width:260px;">
+              <div class="preset-slider" data-key="${setting.key}" data-type="preset">
+                <div class="preset-track">
+                  <div class="preset-fill" style="width:${steps.indexOf(presetValue) / (steps.length - 1) * 100}%"></div>
+                  <div class="preset-thumb" style="left:${steps.indexOf(presetValue) / (steps.length - 1) * 100}%" data-value="${presetValue}"></div>
+                </div>
+                <div class="preset-labels">
+                  ${steps.map(s => `<button type="button" class="preset-label ${s === presetValue ? 'active' : ''}" data-step="${s}"><span class="preset-label-text">${labels[s]}</span><span class="preset-label-desc">${descs[s]}</span></button>`).join('')}
+                </div>
+              </div>
             </div>
           </div>`;
 
@@ -268,6 +309,8 @@ class SettingsApp {
 
       if (type === 'boolean') {
         input.checked = !!value;
+      } else if (type === 'theme') {
+        input.checked = value === 'light';
       } else if (type === 'number') {
         input.value = value;
       } else if (type === 'select') {
@@ -292,7 +335,7 @@ class SettingsApp {
   _isInputDisabled(setting) {
     if (setting.type !== 'number') return false;
     const preset = this.settings.sensitivityPreset || SETTINGS_DEFAULTS.sensitivityPreset;
-    if (preset === 'custom' || preset === 'medium') return false;
+    if (preset === 'medium') return false;
     // 检查此 key 是否在预设的 overrides 中
     const overrides = SENSITIVITY_PRESETS[preset]?.overrides || {};
     return setting.key in overrides;
@@ -314,26 +357,24 @@ class SettingsApp {
 
     // click 事件委托
     app.addEventListener('click', (e) => {
-      const target = e.target.closest('[data-section], [data-preset], #save-btn, #discard-btn, #import-btn, #export-btn, #reset-btn, #mode-toggle, [data-action], #modal-cancel-btn, #modal-confirm-btn, #check-update-btn, #download-update-btn');
+      const target = e.target.closest('.nav-item, [data-section], [data-preset], #import-btn, #export-btn, #reset-btn, .mode-segment, [data-action], #modal-cancel-btn, #modal-confirm-btn, #check-update-btn, #download-update-btn');
       if (!target) return;
 
       if (target.matches('.nav-item') || target.dataset.section) {
         const sectionId = target.dataset.section || target.closest('.nav-item')?.dataset?.section;
         if (sectionId) this._switchSection(sectionId);
+      } else if (target.matches('.preset-label')) {
+        this._onPresetChange(target.dataset.step);
       } else if (target.dataset.preset) {
         this._onPresetChange(target.dataset.preset);
-      } else if (target.id === 'save-btn') {
-        this._saveSettings();
-      } else if (target.id === 'discard-btn') {
-        this._discardChanges();
       } else if (target.id === 'import-btn') {
         document.getElementById('import-file')?.click();
       } else if (target.id === 'export-btn') {
         this._exportSettings();
       } else if (target.id === 'reset-btn') {
         this._showConfirm('确定要恢复所有设置为默认值吗？<br>此操作不可撤销。', () => this._resetSettings());
-      } else if (target.id === 'mode-toggle' || target.closest('#mode-toggle')) {
-        this._toggleMode();
+      } else if (target.matches('.mode-segment')) {
+        this._setMode(target.dataset.mode);
       } else if (target.dataset.action === '_clearCache') {
         this._showConfirm('确定要清除所有检测缓存吗？<br>下次访问网站时将重新检测。', () => this._clearCache());
       } else if (target.dataset.action === '_clearAllData') {
@@ -358,13 +399,89 @@ class SettingsApp {
       });
     }
 
-    // 键盘快捷键
-    document.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
-        e.preventDefault();
-        if (this._dirty) this._saveSettings();
+    // 灵敏度预设滑块拖拽
+    const STEPS = ['low', 'medium', 'high'];
+    let dragging = false;
+
+    const getRatioFromX = (clientX) => {
+      const track = document.querySelector('.preset-track');
+      if (!track) return null;
+      const rect = track.getBoundingClientRect();
+      return Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    };
+
+    const getClosestStep = (ratio) => {
+      const idx = Math.round(ratio * (STEPS.length - 1));
+      return STEPS[idx];
+    };
+
+    const updateSliderUI = (ratio) => {
+      const pct = ratio * 100;
+      const thumb = document.querySelector('.preset-thumb');
+      const fill = document.querySelector('.preset-fill');
+      if (thumb) thumb.style.left = pct + '%';
+      if (fill) fill.style.width = pct + '%';
+    };
+
+    const snapSliderUI = (step) => {
+      const idx = STEPS.indexOf(step);
+      const pct = (idx / (STEPS.length - 1)) * 100;
+      const thumb = document.querySelector('.preset-thumb');
+      const fill = document.querySelector('.preset-fill');
+      const labels = document.querySelectorAll('.preset-label');
+      if (thumb) { thumb.style.left = pct + '%'; thumb.dataset.value = step; }
+      if (fill) fill.style.width = pct + '%';
+      labels.forEach(l => l.classList.toggle('active', l.dataset.step === step));
+    };
+
+    const onDragStart = (e) => {
+      const thumb = e.target.closest('.preset-thumb');
+      if (!thumb) return;
+      e.preventDefault();
+      dragging = true;
+      thumb.classList.add('dragging');
+    };
+
+    const onDragMove = (e) => {
+      if (!dragging) return;
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const ratio = getRatioFromX(clientX);
+      if (ratio !== null) updateSliderUI(ratio);
+    };
+
+    const onDragEnd = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      const thumb = document.querySelector('.preset-thumb');
+      if (!thumb) return;
+      thumb.classList.remove('dragging');
+      const clientX = e.changedTouches ? e.changedTouches[0].clientX : e.clientX;
+      const ratio = getRatioFromX(clientX);
+      if (ratio === null) return;
+      const step = getClosestStep(ratio);
+      snapSliderUI(step);
+      if (step !== this.settings.sensitivityPreset) {
+        this._onPresetChange(step);
+      }
+    };
+
+    app.addEventListener('mousedown', onDragStart);
+    app.addEventListener('touchstart', onDragStart, { passive: false });
+    document.addEventListener('mousemove', onDragMove);
+    document.addEventListener('touchmove', onDragMove, { passive: false });
+    document.addEventListener('mouseup', onDragEnd);
+    document.addEventListener('touchend', onDragEnd);
+
+    // 点击轨道直接跳转
+    app.addEventListener('click', (e) => {
+      if (e.target.closest('.preset-thumb') || e.target.closest('.preset-label')) return;
+      if (!e.target.closest('.preset-track')) return;
+      const step = getClosestStep(e.clientX);
+      if (step && step !== this.settings.sensitivityPreset) {
+        this._onPresetChange(step);
       }
     });
+
   }
 
   // ==================== 设置变更 ====================
@@ -390,32 +507,36 @@ class SettingsApp {
       case 'select':
         value = input.value;
         break;
+      case 'theme':
+        value = input.checked ? 'light' : 'dark';
+        break;
+      case 'preset':
+        value = input.value;
+        break;
       default:
         value = input.value;
     }
 
     this.settings[key] = value;
 
-    // 灵敏度预设变更
-    if (key === 'sensitivityPreset') {
-      if (value !== 'custom') {
-        this._applyPresetOverrides(value);
-      } else {
-        this._clearPresetOverrides();
-      }
-      // 重渲染当前 section（数值输入需要更新禁用状态）
-      this._renderSection(this._activeSection);
+    // 主题变更 → 立即生效
+    if (key === 'theme') {
+      this._applyTheme();
     }
 
-    this._markDirty();
+    // 灵敏度预设变更
+    if (key === 'sensitivityPreset') {
+      this._applyPresetOverrides(value);
+      // 重渲染当前 section（数值输入需要更新禁用状态），跳过淡入动画
+      this._renderSection(this._activeSection, true);
+      // 滑块视觉同步（重渲染后会重建 DOM，无需额外调用）
+    }
+
+    this._saveSettings();
   }
 
   _onPresetChange(preset) {
-    if (this._mode !== 'basic') {
-      // 预设按钮在 advanced 模式下也可用
-    }
-    this.settings.sensitivityPreset = preset;
-    this._onSettingChange({ dataset: { key: 'sensitivityPreset', type: 'select' }, value: preset });
+    this._onSettingChange({ dataset: { key: 'sensitivityPreset', type: 'preset' }, value: preset });
   }
 
   /** 应用灵敏度预设覆盖 */
@@ -425,56 +546,26 @@ class SettingsApp {
     this._presetOverrides = { ...presetDef.overrides };
   }
 
-  /** 清除预设覆盖（切回 custom） */
-  _clearPresetOverrides() {
-    this._presetOverrides = {};
-  }
-
-  // ==================== 脏检测 ====================
-
-  _markDirty() {
-    const current = JSON.stringify(this.settings);
-    const original = JSON.stringify(this._originalSettings);
-    if (current !== original) {
-      this._dirty = true;
-      this._showUnsavedBanner();
-    } else {
-      this._dirty = false;
-      this._hideUnsavedBanner();
-    }
-  }
-
-  _showUnsavedBanner() {
-    const banner = document.getElementById('unsaved-banner');
-    if (banner) banner.style.display = 'flex';
-  }
-
-  _hideUnsavedBanner() {
-    const banner = document.getElementById('unsaved-banner');
-    if (banner) banner.style.display = 'none';
-  }
-
-  _discardChanges() {
-    this.settings = JSON.parse(JSON.stringify(this._originalSettings));
-    this._presetOverrides = {};
-    this._dirty = false;
-    this._hideUnsavedBanner();
-    // 重新应用预设覆盖
-    const preset = this.settings.sensitivityPreset || SETTINGS_DEFAULTS.sensitivityPreset;
-    if (preset !== 'custom' && preset !== 'medium') {
-      this._applyPresetOverrides(preset);
-    }
-    this._renderSection(this._activeSection);
-    this._showToast('已撤销未保存的更改', 'info');
+  /** 同步滑块视觉状态 */
+  _syncPresetSlider(value) {
+    const thumb = document.querySelector('.preset-thumb');
+    const fill = document.querySelector('.preset-fill');
+    const labels = document.querySelectorAll('.preset-label');
+    if (!thumb || !fill) return;
+    const steps = ['low', 'medium', 'high'];
+    const idx = steps.indexOf(value);
+    const pct = idx / (steps.length - 1) * 100;
+    thumb.style.left = pct + '%';
+    thumb.dataset.value = value;
+    fill.style.width = pct + '%';
+    labels.forEach(l => l.classList.toggle('active', l.dataset.step === value));
   }
 
   // ==================== 模式切换 ====================
 
-  _toggleMode() {
-    // 三向循环：basic → advanced → developer → basic
-    if (this._mode === 'basic') this._mode = 'advanced';
-    else if (this._mode === 'advanced') this._mode = 'developer';
-    else this._mode = 'basic';
+  _setMode(mode) {
+    if (this._mode === mode) return;
+    this._mode = mode;
     this._applyModeToDom();
     this._renderSidebar();
     this._renderSection(this._activeSection);
@@ -484,11 +575,10 @@ class SettingsApp {
 
   _applyModeToDom() {
     document.documentElement.dataset.mode = this._mode;
-    const toggleText = document.getElementById('mode-toggle-text');
-    if (toggleText) {
-      const nextLabels = { basic: '高级模式', advanced: '开发者模式', developer: '基础模式' };
-      toggleText.textContent = nextLabels[this._mode];
-    }
+    // 更新分段控件高亮
+    document.querySelectorAll('.mode-segment').forEach(btn => {
+      btn.classList.toggle('active', btn.dataset.mode === this._mode);
+    });
   }
 
   // ==================== 分区切换 ====================
@@ -548,9 +638,9 @@ class SettingsApp {
       // 合并
       this.settings = { ...SETTINGS_DEFAULTS, ...validated };
       this._presetOverrides = {};
-      this._markDirty();
+      this._saveSettings();
       this._renderSection(this._activeSection);
-      this._showToast(`已导入 ${importedCount} 项设置，点击"保存更改"生效`, 'info');
+      this._showToast(`已导入 ${importedCount} 项设置`, 'success');
 
     } catch (e) {
       this._showToast(`导入失败: ${e.message}`, 'error');
@@ -560,9 +650,9 @@ class SettingsApp {
   async _resetSettings() {
     this.settings = { ...SETTINGS_DEFAULTS };
     this._presetOverrides = {};
-    this._markDirty();
+    this._saveSettings();
     this._renderSection(this._activeSection);
-    this._showToast('已恢复默认设置，点击"保存更改"生效', 'info');
+    this._showToast('已恢复默认设置', 'success');
   }
 
   // ==================== 数据管理 ====================
@@ -596,10 +686,7 @@ class SettingsApp {
       }
       await chrome.storage.local.remove(STORAGE_KEYS.GLOBAL_SETTINGS);
       this.settings = { ...SETTINGS_DEFAULTS };
-      this._originalSettings = { ...SETTINGS_DEFAULTS };
       this._presetOverrides = {};
-      this._dirty = false;
-      this._hideUnsavedBanner();
       this._renderSection(this._activeSection);
       this._showToast('已清除全部数据并恢复默认设置', 'success');
     } catch (e) {
@@ -1115,18 +1202,21 @@ class SettingsApp {
             <div class="about-row"><span class="about-label">设置 Schema</span><span class="about-value">v${SCHEMA_VERSION}</span></div>
           </div>
           <div class="about-card" id="update-card">
+          <div class="version-check-header">
             <h3>
               <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-3px;margin-right:4px;">
                 <polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
               </svg>
-              更新检测
+            版本检测
             </h3>
-            <div id="update-status">加载中...</div>
-            <div class="list-actions" style="margin-top:8px;">
-              <button id="check-update-btn" class="btn">
+            <button id="check-update-btn" class="btn">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:3px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
                 检查更新
               </button>
+           </div>
+            <div id="update-status">加载中...</div>
+            <div class="list-actions" style="margin-top:8px;">
+              
               <a id="download-update-btn" class="btn btn-primary" style="display:none;" href="#" target="_blank" rel="noopener">
                 <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" style="vertical-align:-2px;margin-right:3px;"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                 前往下载
@@ -1155,11 +1245,7 @@ class SettingsApp {
               </a>
             </div>
           </div>
-          <div class="about-card">
-            <h3>开源许可</h3>
-            <div class="about-row"><span class="about-label">许可证</span><span class="about-value">MIT License</span></div>
-            <div class="about-row"><span class="about-label">作者</span><span class="about-value">酪酪肽 Lolitide</span></div>
-          </div>
+         
           <div class="about-card" id="storage-stats-card">
             <h3>存储用量</h3>
             <div id="storage-stats"><span style="color:var(--text2)">加载中...</span></div>

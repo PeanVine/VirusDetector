@@ -1,4 +1,8 @@
 :root {
+  --radius: 8px;
+}
+
+[data-theme="dark"] {
   --green: #4caf50;
   --green-light: #e8f5e9;
   --green-dark: #388e3c;
@@ -15,7 +19,33 @@
   --text2: #a0a0a0;
   --text3: #707070;
   --border: #2a2a4a;
-  --radius: 8px;
+  --bg-hover: #20203d;
+  --wl-bg: #1a237e;
+  --wl-color: #90caf9;
+  --wl-border: #42a5f5;
+}
+
+[data-theme="light"] {
+  --bg: #ffffff;
+  --bg2: #f5f5f5;
+  --bg3: #e8eaf6;
+  --text: #333333;
+  --text2: #666666;
+  --text3: #999999;
+  --border: #e8e8e8;
+  --bg-hover: #f7f7f7;
+  --wl-bg: #e8eaf6;
+  --wl-color: #283593;
+  --wl-border: #5c6bc0;
+  --green: #4CAF50;
+  --green-light: #E8F5E9;
+  --green-dark: #2E7D32;
+  --red: #F44336;
+  --red-light: #FFEBEE;
+  --red-dark: #C62828;
+  --blue: #1976D2;
+  --blue-dark: #1565C0;
+  --orange: #F57C00;
 }
 
 * {
@@ -98,9 +128,13 @@ body {
   line-height: 0;
 }
 .header-icon svg {
-  width: 40px;
-  height: 40px;
+  width: 70px;
+  height: 70px;
+  top:-12px;
+  left:12px;
   margin-bottom: 6px;
+  opacity: 0.7;
+  position: absolute;
 }
 
 .header-text {
@@ -260,7 +294,7 @@ body {
 /* ===== Score Display ===== */
 .score-display {
   text-align: center;
-  padding:50px 18px;
+  padding:16px 16px 0px 16px;
   border-radius: var(--radius);
   margin-bottom: 8px;
   position: relative;
@@ -393,7 +427,7 @@ body {
   border-radius: 20px;
   font-size: 13px;
   font-weight: 600;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .status-badge.safe {
@@ -534,7 +568,7 @@ body {
   background: var(--bg2);
   border-radius: var(--radius);
   padding: 12px 16px;
-  margin-bottom: 12px;
+  margin-bottom: 2px;
 }
 
 .details-title {
@@ -549,7 +583,7 @@ body {
 }
 
 .details-title:hover {
-  color: #fff;
+  color: var(--text);
 }
 
 /* ---- Collapse Chevron ---- */
@@ -696,14 +730,14 @@ body {
   justify-content: flex-start;
   align-items: center;
   padding: 5px 5px;
-  border-top: 1px solid var(--border);
-  background: #16213e;
+  box-shadow: 0 -1px 4px rgba(0,0,0,0.15);
+  background: var(--bg2);
   gap: 6px;
   overflow: hidden;
 }
 
 .footer-btn {
-  background: transparent;
+  background: var(--bg);
   border: 2px solid var(--border);
   color: var(--text2);
   padding: 10px 6px 10px 13px;
@@ -721,8 +755,7 @@ body {
     background 0.2s,
     color 0.2s,
     border-color 0.2s;
-  background: #16213e;
-  z-index: 2;
+  z-index: 3;
 }
 
 .footer-btn svg {
@@ -792,25 +825,22 @@ body {
 }
 
 .footer-btn:hover {
-  background: var(--bg3);
+  z-index: 3;
+  background: var(--bg-hover);
   color: var(--text);
 }
 
 #footer:hover #report-false-btn:not(:hover):not(:disabled) {
-  color: #c8c8c8;
-  transition-delay: 0s;
+  color: var(--text3);
 }
 #footer:hover #report-phish-btn:not(:hover):not(:disabled) {
-  color: #c8c8c8;
-  transition-delay: 0.06s;
+  color: var(--text3);
 }
 #footer:hover #whitelist-btn:not(:hover):not(:disabled) {
-  color: #c8c8c8;
-  transition-delay: 0.12s;
+  color: var(--text3);
 }
 #footer:hover #refresh-btn:not(:hover):not(:disabled) {
-  color: #c8c8c8;
-  transition-delay: 0.18s;
+  color: var(--text3);
 }
 
 #footer:hover .tip-up {
@@ -858,15 +888,15 @@ body {
 }
 
 .whitelist-btn:hover:not(:disabled) {
-  background: #1a237e;
-  color: #90caf9;
-  border-color: #42a5f5;
+  background: var(--wl-bg);
+  color: var(--wl-color);
+  border-color: var(--wl-border);
 }
 
 .whitelist-btn.active {
-  background: #1a237e;
-  color: #90caf9;
-  border-color: #42a5f5;
+  background: var(--wl-bg);
+  color: var(--wl-color);
+  border-color: var(--wl-border);
 }
 
 /* ===== Whitelist State ===== */

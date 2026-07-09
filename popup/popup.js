@@ -192,7 +192,7 @@
     els.scoreValue.textContent = score;
     // 动态更新评分卡片（颜色、图标、刻度尺指示器）
     updateScoreDisplay(els.scoreValue, els.safeGaugeIndicator, els.safeScoreIcon, score, false);
-    if (els.currentDomain) els.currentDomain.textContent = data.domain || '-';
+    if (els.currentDomain) els.currentDomain.textContent = data.domain || '该页面不支持/不进行检测';
   }
 
   function showWhitelisted(data) {
@@ -395,6 +395,14 @@
     });
   }
 
+  // 设置按钮 → 打开选项页
+  const settingsBtn = document.getElementById('settings-btn');
+  if (settingsBtn) {
+    settingsBtn.addEventListener('click', () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('options/options.html') });
+    });
+  }
+
   // 背景容器（header 区域点击跳转 GitHub）
   const bgContainer = document.getElementById('bg-container');
   if (bgContainer) {
@@ -565,13 +573,25 @@
 
   // ==================== 初始化 ====================
 
+  /** 从 storage 读取主题并立即应用 */
+  async function applyTheme() {
+    try {
+      const stored = await chrome.storage.local.get('global_settings');
+      const settings = stored && stored.global_settings ? stored.global_settings : {};
+      const theme = settings.theme || 'dark';
+      document.documentElement.setAttribute('data-theme', theme);
+      // 同步到 localStorage 以便下次加载无闪烁
+      try { localStorage.setItem('vt_theme', theme); } catch(e) {}
+    } catch (e) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    }
+  }
+
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
-    render();
-    checkUpdateBadge();
+    applyTheme().then(() => { render(); checkUpdateBadge(); });
   } else {
     document.addEventListener('DOMContentLoaded', () => {
-      render();
-      checkUpdateBadge();
+      applyTheme().then(() => { render(); checkUpdateBadge(); });
     });
   }
 })();
