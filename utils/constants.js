@@ -9,7 +9,7 @@
 
 // ==================== 版本号（统一入口） ====================
 /** 当前扩展版本号，所有模块引用此常量，发版时仅需修改此处 + manifest.json + README */
-export const VERSION = '2.4.2';
+export const VERSION = '2.5.0';
 
 // ==================== 评分体系 ====================
 /** 触发警告的总分阈值（注入拦截 + 警告窗口 + 图标变红） */
@@ -192,7 +192,12 @@ export const MSG_TYPES = {
   DOWNLOAD_CONFIRMATION: 'DOWNLOAD_CONFIRMATION',
   GET_DOWNLOAD_BLACKLIST: 'GET_DOWNLOAD_BLACKLIST',
   REMOVE_DOWNLOAD_BLACKLIST: 'REMOVE_DOWNLOAD_BLACKLIST',
-  SUBMIT_REPORT: 'SUBMIT_REPORT'
+  SUBMIT_REPORT: 'SUBMIT_REPORT',
+  SETTINGS_UPDATED: 'SETTINGS_UPDATED',
+  GET_SETTINGS: 'GET_SETTINGS',
+  UPDATE_SETTINGS: 'UPDATE_SETTINGS',
+  BULK_UPDATE_WHITELIST: 'BULK_UPDATE_WHITELIST',
+  CHECK_UPDATE: 'CHECK_UPDATE'
 };
 
 // ==================== 存储键 ====================
@@ -204,7 +209,8 @@ export const STORAGE_KEYS = {
   WHITELIST: 'whitelist',
   DOWNLOAD_BLACKLIST: 'download_blacklist',
   PENDING_DOWNLOADS: 'pending_downloads',
-  USER_REPORTS: 'user_reports'
+  USER_REPORTS: 'user_reports',
+  UPDATE_INFO: 'update_info'
 };
 
 // 缓存有效期（毫秒）
@@ -213,6 +219,13 @@ export const CACHE_TTL = 24 * 60 * 60 * 1000;  // 24小时
 // ==================== 用户上报 → GitHub Issue ====================
 /** Cloudflare Worker 上报代理 URL（部署后替换为实际 URL） */
 export const REPORT_API_URL = 'https://virus-detector-report.lolitide.workers.dev/api/report';
+
+// ==================== 更新检测 ====================
+/** GitHub Releases API（获取最新版本） */
+export const GITHUB_RELEASES_API_URL = 'https://api.github.com/repos/Lolitide/VirusDetector/releases/latest';
+
+/** GitHub Releases 页面（用户手动下载） */
+export const GITHUB_RELEASES_PAGE = 'https://github.com/Lolitide/VirusDetector/releases';
 
 // ==================== RDAP / Whois API 配置 ====================
 /** RDAP IANA 引导文件 URL（TLD → RDAP 服务器映射） */
@@ -272,6 +285,34 @@ export const DOWNLOAD_BLACKLIST_CLEANUP_DAYS = 90;
 
 /** 黑名单容量上限（条） */
 export const DOWNLOAD_BLACKLIST_MAX_ENTRIES = 500;
+
+// ==================== Resource Resolver 配置 ====================
+/**
+ * Resource Resolver 的运行时参数。
+ * 与 background/resource-resolver/config.js 保持同步。
+ */
+
+/** Resource Resolver 最大递归深度（0=页面本身，最多向下 N 层） */
+export const RESOLVER_MAX_DEPTH = 3;
+
+/** Resource Resolver 整个解析过程最多处理的资源数 */
+export const RESOLVER_MAX_TOTAL_RESOURCES = 20;
+
+/** TXT 文件最大下载大小（字节） */
+export const RESOLVER_MAX_TXT_SIZE = 256 * 1024; // 256KB
+
+/** 单个资源 fetch 超时（毫秒） */
+export const RESOLVER_PER_RESOURCE_TIMEOUT = 2000;
+
+/** Resource Resolver 总超时（毫秒） */
+export const RESOLVER_TOTAL_TIMEOUT = 5000;
+
+/** 可执行程序文件扩展名（受 detectNonArchiveFiles 开关控制） */
+export const EXECUTABLE_EXTENSIONS = [
+  '.exe', '.msi', '.apk', '.pkg', '.appx', '.deb', '.rpm',
+  '.bat', '.cmd', '.ps1', '.vbs', '.scr', '.jar',
+  '.bin', '.run', '.sh', '.dmg'
+];
 
 // ==================== 域名年龄减分规则 ====================
 /**

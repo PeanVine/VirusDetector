@@ -318,9 +318,10 @@ export class IcpUtils {
   /**
    * 公安备案号正则
    * 格式: 省份简称 + 公网安备 + 数字 + 号
+   * 允许各段之间有可选空格（如 "沪公网安备 31010502000878号"）
    */
   static POLICE_BEIAN_REGEX = new RegExp(
-    `(${PROVINCE_PATTERN})公网安备\\d{10,}号`,
+    `(${PROVINCE_PATTERN})\\s*公网安备\\s*\\d{10,}\\s*号`,
     'g'
   );
 
@@ -344,7 +345,18 @@ export class IcpUtils {
         }
       }
 
-      // 如果完整正则没匹配到，尝试简化正则
+      // 公安备案号检测（带空格容差）
+      if (results.length === 0) {
+        for (const str of domIcpStrings) {
+          const matches = str.match(this.POLICE_BEIAN_REGEX);
+          if (matches) {
+            results.push(...matches);
+            source = 'dom_footer_police';
+          }
+        }
+      }
+
+      // 如果完整正则和公安备案都没匹配到，尝试简化正则
       if (results.length === 0) {
         for (const str of domIcpStrings) {
           const matches = str.match(this.ICP_SIMPLE_REGEX);
@@ -364,10 +376,16 @@ export class IcpUtils {
         results.push(...fullMatches);
         source = 'page_text';
       } else {
-        const simpleMatches = pageText.match(this.ICP_SIMPLE_REGEX);
-        if (simpleMatches) {
-          results.push(...simpleMatches.map(m => m + '号'));
-          source = 'page_text_simple';
+        const policeMatches = pageText.match(this.POLICE_BEIAN_REGEX);
+        if (policeMatches) {
+          results.push(...policeMatches);
+          source = 'page_text_police';
+        } else {
+          const simpleMatches = pageText.match(this.ICP_SIMPLE_REGEX);
+          if (simpleMatches) {
+            results.push(...simpleMatches.map(m => m + '号'));
+            source = 'page_text_simple';
+          }
         }
       }
     }

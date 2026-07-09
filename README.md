@@ -3,7 +3,7 @@
 > Chrome/Edge 浏览器扩展，实时检测银狐木马（Silver Fox Trojan）钓鱼与仿冒网站。
 
 [![Manifest](https://img.shields.io/badge/Manifest-V3-blue)](https://developer.chrome.com/docs/extensions/mv3/)
-[![Version](https://img.shields.io/badge/Version-2.4.2-orange)](https://github.com)
+[![Version](https://img.shields.io/badge/Version-2.5.0-orange)](https://github.com)
 
 ---
 
@@ -74,9 +74,24 @@ VirusDetector/
 │   ├── whois-client.js                # 统一域名查询入口（RDAP 主 + WhoisCX 回退）
 │   ├── cache-manager.js               # chrome.storage.local 缓存管理（24h TTL）
 │   ├── similarity.js                  # 预留文本相似度工具（当前未接入评分链路）
-│   └── icp-utils.js                   # ICP 备案号正则匹配（覆盖 34 个省级行政区简称）
+│   ├── icp-utils.js                   # ICP 备案号正则匹配（覆盖 34 个省级行政区简称）
+│   └── resource-resolver/
+│       ├── index.js                   # Resource Resolver 主调度器 —— BFS 资源树遍历
+│       ├── config.js                  # 解析器配置常量（深度/数量/超时/大小限制）
+│       ├── resource-graph.js          # ResourceGraph / ResourceNode 数据结构
+│       └── resolvers/
+│           ├── base-resolver.js       # 解析器基类（可插拔接口）
+│           ├── html-resolver.js       # HTML 源码 URL 提取（11 种标签）
+│           ├── script-resolver.js     # Inline Script 静态分析（location/fetch/URL 模式）
+│           ├── meta-resolver.js       # Meta Refresh 跳转解析
+│           ├── txt-resolver.js        # TXT 内容递归解析（TXT→TXT→ZIP 链）
+│           ├── redirect-resolver.js   # HTTP 30x 重定向跟随
+│           ├── json-resolver.js       # JSON 内容 ZIP URL 提取
+│           ├── iframe-resolver.js     # iframe src 解析
+│           └── external-script-resolver.js  # 外部 JS 解析（预留，默认关闭）
 ├── content/
-│   └── content-script.js              # 内容脚本 —— 链接采集、ICP 扫描、页面度量采集
+│   ├── navigation-guard.js            # L0 导航守卫 —— document_start 拦截 JS 自动下载
+│   └── content-script.js              # 内容脚本 —— 链接采集、ICP 扫描、资源数据采集
 ├── popup/
 │   ├── popup.html                     # 工具栏弹窗 UI
 │   ├── popup.css                      # 弹窗样式（深色主题、SVG 图标系统）
@@ -99,8 +114,10 @@ VirusDetector/
 
 - **零依赖**：纯原生 JavaScript（ES Modules），无需 Node.js 构建
 - **Manifest V3**：使用 Service Worker 事件驱动架构
+- **三层递进拦截**：L0 导航守卫（document_start）→ L1 资源解析器（Resource Resolver）→ L2 页面注入拦截（injectBlocker）→ L3 浏览器下载 API 兜底
 - **通信模型**：Background (Service Worker) ↔ Content Script ↔ Popup / Warning 页面消息传递
-- **算法**：域名仿冒使用精确段匹配、子串包含、关键词堆叠、约束编辑距离；`similarity.js` 保留为未接入的文本相似度工具
+- **算法**：域名仿冒使用精确段匹配、子串包含、关键词堆叠、约束编辑距离；Resource Resolver 使用 BFS 资源树遍历 + 解析器注册表模式
+- **抗绕过**：对抗 IDM 等下载器绕过（页面级 click / location / createElement hook），拦截 JS 程式化下载
 
 ---
 
@@ -291,6 +308,54 @@ score = floor(60 / (1 + (x / (60 × b))^a))
 | 建站 / 个人页 | weebly.com, wixsite.com, jimdo.com, strikingly.com, carrd.co, about.me, linktr.ee |
 
 > **与用户白名单的区别**：用户白名单（弹窗中操作）完全跳过所有 8 项检测规则；可信平台白名单仅跳过规则一（域名仿冒），是一个内置的、面向 UGC 平台的误报抑制机制。
+
+### Resource Resolver — 统一资源解析层
+
+将资源解析与评分彻底解耦的新架构层。Resource Resolver 负责递归解析页面资源树（HTML → TXT → TXT → ZIP 等多级链），输出结构化的 `ResourceGraph`；Rule2（压缩包下载检测）仅消费 Graph 数据进行评分，不承担任何资源解析职责。
+
+**核心能力**：
+
+| 解析器 | 触发条件 | 能力 | 网络请求 |
+|--------|---------|------|:---:|
+| HtmlResolver | 页面 HTML | 提取 11 种 HTML 标签的 URL（a/link/script/img/iframe/form/source/video/audio/object/embed），相对路径自动转换 | — |
+| ScriptResolver | Inline Script | 静态分析 `location.href`、`window.open`、`fetch`、`axios`、`new URL` 等模式，提取 ZIP/EXE 字符串 | — |
+| MetaRefreshResolver | `<meta http-equiv="refresh">` | 解析 `content="5;url=..."` 跳转目标 | — |
+| TxtResolver | `.txt` 文件 | Fetch 内容 → 正则提取归档 URL → 支持 TXT→TXT 递归（最多 3 层） | ✓ |
+| RedirectResolver | HTTP 30x | HEAD 请求跟随重定向，记录完整跳转链 `{from → to, statusCode}` | ✓ |
+| JsonResolver | `.json` 文件 | Fetch JSON → 递归遍历值 → 提取归档 URL | ✓ |
+| IframeResolver | `<iframe src>` | 标记 iframe 源 URL | — |
+| ExternalScriptResolver | 外部 `.js` | （第二阶段预留，默认关闭）Fetch 外部 JS → 提取 URL 模式 | ✓ |
+
+**安全限制**：最大递归深度 3 层、最多处理 20 个资源、TXT 限制 256KB、单资源超时 2s、总超时 5s。任何失败返回中性结果，不阻塞检测流程。
+
+**中间页抓取**（可选，默认关闭）：对于指向 HTML 页面且带下载关键词（「立即下载」「百度网盘」等）的链接，主动 Fetch 该中间页 HTML 内容，提取其中隐藏的 ZIP/RAR/7Z 等归档 URL，实现 **页面 A → 下载页 B → ZIP** 的完整发现链。
+
+### 三层递进下载拦截
+
+针对 IDM 等下载器绕过 `chrome.downloads.onCreated` 的问题，采用从早到晚、从页面到浏览器的分层防御：
+
+```
+Timeline:  document_start       page load        content script reports      user clicks
+              │                    │                    │                         │
+              ▼                    ▼                    ▼                         ▼
+         ┌─────────┐     ┌─────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+         │ Layer 0 │     │    Layer 1      │    │    Layer 2       │    │    Layer 3       │
+         │ NavGuard│────▶│ ResourceResolver│───▶│ injectBlocker   │───▶│ downloads API    │
+         │ (新)    │     │ + ScoringEngine │    │ (增强)           │    │ (现有,兜底)      │
+         └─────────┘     └─────────────────┘    └──────────────────┘    └──────────────────┘
+```
+
+| 层级 | 名称 | 时机 | 职责 |
+|:---:|------|------|------|
+| **L0** | Navigation Guard | `document_start`，先于页面 JS | Hook `window.location` setter + `window.open`，拦截 JS 自动跳转/下载到危险文件 |
+| **L1** | Resource Resolver + Phase A | Content Script 上报后（~600ms） | 构建 ResourceGraph，发现 TXT→ZIP 链和中间下载页 |
+| **L2** | injectBlockerFunc | 评分 ≥50 注入 lightweight，≥80 注入完整版 | Hook `a.click()` + `document.createElement`，拦截页面级下载点击；≥80 增加视觉禁用 + MutationObserver |
+| **L3** | chrome.downloads.onCreated | 浏览器下载事件触发时 | 取消下载 + 弹窗确认（IDM 接管时此层失效，由 L0/L2 兜底） |
+
+**分层注入阈值**：
+- 评分 ≥50 → 注入 lightweight 拦截器（仅 JS hooks + click 拦截，无视觉禁用）
+- 评分 ≥80 → 注入完整拦截器（视觉禁用下载按钮 + MutationObserver + 下载确认弹窗）
+- 评分 ≥100 → 完整拦截器 + 红色警告弹窗 + 桌面通知 + 红色图标
 
 ### 评分体系
 

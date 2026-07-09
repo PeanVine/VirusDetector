@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "银狐木马检测 - Virus Detector",
-  "version": "2.4.2",
-  "version_name": "2.4.2",
+  "version": "2.5.0",
+  "version_name": "2.5.0",
   "description": "检测银狐木马钓鱼网站，通过域名分析、ICP备案检查、下载检测、链接分析和代码工程化检测保护您的数字安全",
   "permissions": [
     "activeTab",
@@ -22,6 +22,18 @@
     "type": "module"
   },
   "content_scripts": [
+    {
+      "matches": [
+        "http://*/*",
+        "https://*/*"
+      ],
+      "js": [
+        "content/navigation-guard.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": false,
+      "world": "MAIN"
+    },
     {
       "matches": [
         "http://*/*",
@@ -50,6 +62,10 @@
       ]
     }
   ],
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": true
+  },
   "action": {
     "default_popup": "popup/popup.html",
     "default_icon": {

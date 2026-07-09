@@ -53,7 +53,17 @@ const _cache = new Map();
 let _lastWhoisRequestTime = 0;
 
 /** WhoisCX API 最小请求间隔（毫秒），保护免费 API 不被封禁 */
-const MIN_WHOIS_INTERVAL = 2100; // 略大于 2 秒
+const MIN_WHOIS_INTERVAL_DEFAULT = 2100;
+
+/** 从用户设置读取速率限制间隔，回退到默认值 */
+async function _getWhoisInterval() {
+  try {
+    const r = await chrome.storage.local.get('global_settings');
+    const gs = r.global_settings || {};
+    if (gs.whois_apiIntervalMs && gs.whois_apiIntervalMs >= 1000) return gs.whois_apiIntervalMs;
+  } catch (e) { /* ignore */ }
+  return MIN_WHOIS_INTERVAL_DEFAULT;
+}
 
 /**
  * 等待直到满足 WhoisCX 速率限制要求
@@ -62,8 +72,9 @@ const MIN_WHOIS_INTERVAL = 2100; // 略大于 2 秒
 async function _waitForWhoisRateLimit() {
   const now = Date.now();
   const elapsed = now - _lastWhoisRequestTime;
-  if (elapsed < MIN_WHOIS_INTERVAL) {
-    await new Promise(resolve => setTimeout(resolve, MIN_WHOIS_INTERVAL - elapsed));
+  const interval = await _getWhoisInterval();
+  if (elapsed < interval) {
+    await new Promise(resolve => setTimeout(resolve, interval - elapsed));
   }
   _lastWhoisRequestTime = Date.now();
 }

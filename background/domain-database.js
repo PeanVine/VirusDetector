@@ -334,7 +334,7 @@ const DOMAIN_DATABASE = [
     officialDomains: ['v.qq.com'],
     correctUrl: 'https://v.qq.com',
     category: SOFTWARE_CATEGORIES.VIDEO,
-    keywords: ['腾讯视频', 'qq视频', 'QQLive'],
+    keywords: ['腾讯视频', 'qq视频'],
     isChineseBrand: true
   },
   {
@@ -592,7 +592,7 @@ const DOMAIN_DATABASE = [
 // ========== 压缩工具 ==========
   {
     name: 'WinRAR',
-    officialDomains: ['rarlab.com', 'win-rar.com'],
+    officialDomains: ['rarlab.com', 'win-rar.com', 'winrar.com.cn'],
     correctUrl: 'https://www.rarlab.com',
     category: SOFTWARE_CATEGORIES.COMPRESSION,
     keywords: ['WinRAR', 'winrar', 'rar'],
