@@ -58,6 +58,231 @@ import {
   DOWNLOAD_VALID_DAYS_THRESHOLD, DOWNLOAD_CREATION_DAYS_THRESHOLD
 } from '../utils/constants.js';
 
+// ==================== 品牌顶级域名（Brand TLD，ICANN 授权企业运营） ====================
+// 这些 TLD 由对应企业完全控制，其下所有域名均为该企业的官方资产，
+// 不存在仿冒可能，可安全跳过域名仿冒检测。
+const BRAND_TLDS = new Set([
+  'google',       // Google Registry
+  'goog',         // Google Registry（变体）
+  'microsoft',    // Microsoft Corporation
+  'apple',        // Apple Inc.
+  'amazon',       // Amazon Registry
+  'aws',          // Amazon Web Services
+  'youtube',      // Google（YouTube）
+  'gmail',        // Google（Gmail）
+  'android',      // Google（Android）
+  'chrome',       // Google（Chrome）
+  'bmw',          // BMW Group
+  'mini',         // BMW Group
+  'ford',         // Ford Motor Company
+  'lincoln',      // Ford Motor Company
+  'ferrari',      // Ferrari S.p.A.
+  'toyota',       // Toyota Motor Corporation
+  'lexus',        // Toyota Motor Corporation
+  'honda',        // Honda Motor Co., Ltd.
+  'hyundai',      // Hyundai Motor Group
+  'kia',          // Hyundai Motor Group
+  'nissan',       // Nissan Motor Co., Ltd.
+  'infiniti',     // Nissan Motor Co., Ltd.
+  'aarp',         // AARP
+  'nec',          // NEC Corporation
+  'otsuka',       // Otsuka Holdings Co., Ltd.
+  'barclays',     // Barclays Bank PLC
+  'bnpparibas',   // BNP Paribas
+  'axa',          // AXA Group
+  'allfinanz',    // Allfinanz
+  'jpmorgan',     // JPMorgan Chase
+  'chase',        // JPMorgan Chase
+  'sap',          // SAP AG
+  'oracle',       // Oracle Corporation
+  'intel',        // Intel Corporation
+  'cisco',        // Cisco Systems
+  'ibm',          // IBM
+  'ericsson',     // Ericsson
+  'nokia',        // Nokia Corporation
+  'qualcomm',     // Qualcomm Incorporated
+  'broadcom',     // Broadcom Corporation
+  'sony',         // Sony Corporation
+  'samsung',      // Samsung Group
+  'lg',           // LG Corp.
+  'panasonic',    // Panasonic Corporation
+  'philips',      // Philips
+  'dell',         // Dell Inc.
+  'canon',        // Canon Inc.
+  'epson',        // Seiko Epson Corporation
+  'nikon',        // Nikon Corporation
+  'sharp',        // Sharp Corporation
+  'hitachi',      // Hitachi, Ltd.
+  'fujitsu',      // Fujitsu Limited
+  'toshiba',      // Toshiba Corporation
+  'aeg',          // Electrolux
+  'bbc',          // British Broadcasting Corporation
+  'bloomberg',    // Bloomberg LP
+  'bnl',          // Banca Nazionale del Lavoro
+  'boehringer',   // Boehringer Ingelheim
+  'bradesco',     // Banco Bradesco
+  'calvinklein',  // PVH Corp.
+  'cartier',      // Richemont
+  'cba',          // Commonwealth Bank of Australia
+  'cbn',          // CBN
+  'cern',         // CERN
+  'cfa',          // CFA Institute
+  'chanel',       // Chanel
+  'clinique',     // Estée Lauder
+  'dupont',       // DuPont
+  'dvag',         // Deutsche Vermögensberatung
+  'emerck',       // Merck KGaA
+  'erni',         // ERNI Group
+  'fage',         // FAGE International
+  'fairwinds',    // FairWinds Partners
+  'farmers',      // Farmers Insurance Group
+  'ferrero',      // Ferrero S.p.A.
+  'firestone',    // Bridgestone Corporation
+  'fresenius',    // Fresenius
+  'gea',          // GEA Group
+  'goodhands',    // Allstate Insurance
+  'guardian',     // Guardian Industries
+  'hermes',       // Hermès
+  'hkt',          // Hong Kong Telecommunications
+  'hsbc',         // HSBC Holdings
+  'hyatt',        // Hyatt Hotels Corporation
+  'intuit',       // Intuit Inc.
+  'itau',         // Itaú Unibanco
+  'itv',          // ITV plc
+  'jcb',          // JCB Co., Ltd.
+  'jpmorganchase',// JPMorgan Chase & Co.
+  'kerryhotels',  // Kerry Trading Co.
+  'kred',         // Kreditech
+  'lamborghini',  // Automobili Lamborghini
+  'lancome',      // Lancôme
+  'lilly',        // Eli Lilly
+  'linde',        // Linde AG
+  'lplfinancial', // LPL Financial
+  'lupin',        // Lupin Limited
+  'maserati',     // Maserati S.p.A.
+  'mattel',       // Mattel, Inc.
+  'mckinsey',     // McKinsey & Company
+  'merck',         // Merck & Co., Inc.
+  'merckmsd',     // Merck & Co., Inc.（变体）
+  'microsoft',    // Microsoft Corporation
+  'mit',          // Massachusetts Institute of Technology
+  'mitsubishi',   // Mitsubishi
+  'monster',      // Monster Worldwide
+  'mopar',        // Fiat Chrysler Automobiles
+  'mormon',       // The Church of Jesus Christ of Latter-day Saints
+  'motorola',     // Motorola
+  'movistar',     // Telefónica
+  'mtn',          // MTN Group
+  'mtr',          // Mass Transit Railway
+  'nadex',        // Nadex
+  'naspers',      // Naspers
+  'netaporter',   // Net-a-Porter
+  'netflix',      // Netflix, Inc.
+  'nfl',          // National Football League
+  'nhk',          // NHK (Japan Broadcasting Corporation)
+  'nico',         // DWANGO
+  'nike',         // Nike, Inc.
+  'nissay',       // Nippon Life Insurance
+  'nokia',        // Nokia
+  'nowruz',       // Asia Green IT System
+  'nra',          // National Rifle Association
+  'nrw',          // Nordrhein-Westfalen
+  'ntt',          // Nippon Telegraph and Telephone
+  'obi',          // OBI Group
+  'office',       // Microsoft Corporation
+  'omega',        // Omega SA
+  'oracle',       // Oracle
+  'orange',       // Orange S.A.
+  'otsuka',       // Otsuka Holdings
+  'ovh',          // OVH
+  'panasonic',    // Panasonic
+  'pfizer',       // Pfizer Inc.
+  'philips',      // Philips
+  'piaget',       // Piaget
+  'ping',         // Ping Identity
+  'pnc',          // PNC Financial Services
+  'pohl',         // Deutsche Vermögensberatung
+  'politie',      // Dutch Police
+  'postepay',     // Poste Italiane
+  'pramerica',    // Prudential Financial
+  'praxi',        // Praxi
+  'prod',         // Google Registry
+  'prof',         // Google Registry
+  'qpon',         // dotCOOL
+  'quest',        // Quest
+  'realtor',      // National Association of Realtors
+  'rexroth',      // Bosch Rexroth
+  'ricoh',        // Ricoh Company, Ltd.
+  'rmit',         // RMIT University（澳大利亚大学，固定院校域名，不存在仿冒）
+  'rolex',        // Rolex
+  'rugby',        // World Rugby
+  'safety',       // Safety
+  'sakura',       // SAKURA Internet
+  'sanofi',       // Sanofi
+  'sas',          // SAS Institute
+  'saxo',         // Saxo Bank
+  'sca',          // Svenska Cellulosa Aktiebolaget
+  'schaeffler',   // Schaeffler Group
+  'security',     // Defender Tor
+  'seek',         // SEEK Limited
+  'sener',        // SENER
+  'seven',        // Seven West Media
+  'shell',        // Shell
+  'shopping',     // Google Registry
+  'showtime',     // Showtime Networks
+  'sina',         // Sina Corporation
+  'skoll',        // Skoll Foundation
+  'sky',          // Sky Group
+  'smart',        // Daimler AG
+  'sncf',         // SNCF
+  'social',       // Rightside
+  'sohu',         // Sohu.com
+  'spiegel',      // SPIEGEL-Verlag
+  'statoil',      // Statoil ASA
+  'stc',          // Saudi Telecom
+  'stcgroup',     // Saudi Telecom
+  'storage',      // Self-storage
+  'study',        // Open Universities Australia
+  'swatch',       // Swatch Group
+  'symantec',     // Symantec
+  'taobao',       // Alibaba Group
+  'tattoo',       // Uniregistry
+  'telecity',     // TelecityGroup
+  'teva',         // Teva Pharmaceutical Industries
+  'thd',          // The Home Depot
+  'theatre',      // Key GTLD
+  'tiffany',      // Tiffany & Co.
+  'total',        // Total S.A.
+  'toyota',       // Toyota
+  'travelchannel',// Travel Channel
+  'tushu',        // Amazon Registry
+  'ubs',          // UBS AG
+  'university',   // Donuts
+  'ups',          // United Parcel Service
+  'vegas',        // Dot Vegas, Inc.
+  'ventures',     // Donuts
+  'verisign',     // VeriSign
+  'visa',         // Visa Inc.
+  'volkswagen',   // Volkswagen Group
+  'volvo',        // Volvo
+  'walmart',      // Walmart
+  'walter',       // Sandvik
+  'weather',      // The Weather Channel
+  'weatherchannel',// The Weather Channel
+  'webcam',       // Webcam
+  'weibo',        // Sina Corporation
+  'windows',      // Microsoft Corporation
+  'wme',          // William Morris Endeavor
+  'woodside',     // Woodside Petroleum
+  'wtc',          // World Trade Centers Association
+  'xbox',         // Microsoft Corporation
+  'xerox',        // Xerox Corporation
+  'xin',          // Elegant Leader Limited
+  'yodobashi',    // Yodobashi Camera
+  'youtube',      // Google Registry
+  'zara',         // Inditex
+]);
+
 // ==================== 模块级设置解析 ====================
 
 /** 当前活跃的 settings 对象（evaluateSync/evaluateDomainAgePart 调用前设置，调用后恢复） */
@@ -476,6 +701,14 @@ export class ScoringEngine {
     if (domain.endsWith('.edu.cn')) {
       result.detail = '教育机构域名（.edu.cn），跳过域名仿冒检测';
       result.detailCN = '域名: 教育机构域名';
+      return result;
+    }
+
+    // ---- 品牌顶级域名前置检查 ----
+    // Brand TLD 由对应企业完全控制，其下所有子域名均为官方资产，可安全跳过
+    if (BRAND_TLDS.has(domain.split('.').pop())) {
+      result.detail = '品牌顶级域名（.' + domain.split('.').pop() + '），跳过域名仿冒检测';
+      result.detailCN = '域名: 品牌顶级域名';
       return result;
     }
 
