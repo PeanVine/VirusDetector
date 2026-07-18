@@ -60,6 +60,19 @@ function shouldSkipUrl(url) {
   }
 }
 
+const AUTH_HOST_PATTERN = /^(login|logon|signin|auth|oauth|account|accounts|identity|id|sso|secure|security|verify|verification|console)\./i;
+const AUTH_PATH_PATTERN = /(?:^|[\/?#&=._-])(login|logon|logout|signin|sign-in|signout|sign-out|auth|oauth|authorize|sso|saml|2fa|mfa|otp|totp|challenge|verify|verification|webauthn|passkey|password|credential|credentials|session|callback|consent|recover|recovery|reset|device)(?:$|[\/?#&=._-])/i;
+
+function isSensitiveAuthenticationUrl(url) {
+  try {
+    const parsed = new URL(url);
+    if (AUTH_HOST_PATTERN.test(parsed.hostname)) return true;
+    return AUTH_PATH_PATTERN.test(parsed.pathname + parsed.search + parsed.hash);
+  } catch (e) {
+    return false;
+  }
+}
+
 // ==================== 全局设置缓存 ====================
 
 /** 内存缓存：避免每次评分都读取 storage */
@@ -393,6 +406,7 @@ async function loadGlobalSettings() {
 
 // 去重：每个标签页的警告冷却期（5秒内不重复弹窗）
 const _warningCooldown = new Map();
+const _authenticationTabs = new Set();
 const WARNING_COOLDOWN_MS = 5000;
 
 /**
@@ -467,6 +481,13 @@ async function triggerWarningFlow(tabId, tabState) {
 async function injectDownloadBlocker(tabId, archiveUrls = [], mode = 'full') {
   const settings = await loadGlobalSettings();
   try {
+    const tab = await chrome.tabs.get(tabId);
+    if (!tab.url || _authenticationTabs.has(tabId) ||
+        isSensitiveAuthenticationUrl(tab.url) || await isWhitelisted(tab.url)) {
+      await removeDownloadBlocker(tabId);
+      return;
+    }
+
     await chrome.scripting.executeScript({
       target: { tabId },
       func: injectBlockerFunc,
@@ -476,6 +497,47 @@ async function injectDownloadBlocker(tabId, archiveUrls = [], mode = 'full') {
   } catch (e) {
     console.error('[ServiceWorker] 注入失败:', e);
   }
+}
+
+async function removeDownloadBlocker(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      func: removeDownloadBlockerFunc,
+      injectImmediately: true
+    });
+  } catch (e) {
+    // 页面可能已关闭或不允许脚本注入。
+  }
+}
+
+async function removeBlockersFromWhitelistedTabs() {
+  const tabs = await chrome.tabs.query({});
+  await Promise.all(tabs.map(async (tab) => {
+    if (!tab.id || !tab.url || !await isWhitelisted(tab.url)) return;
+    await removeDownloadBlocker(tab.id);
+    setIconWhitelist(tab.id);
+  }));
+}
+
+function removeDownloadBlockerFunc() {
+  const state = window.__virusDetectorBlockerState;
+  if (!state) return;
+
+  if (state.anchorClick && HTMLAnchorElement.prototype.click === state.patchedAnchorClick) {
+    HTMLAnchorElement.prototype.click = state.anchorClick;
+  }
+  if (state.createElement && document.createElement === state.patchedCreateElement) {
+    document.createElement = state.createElement;
+  }
+  if (state.clickHandler) {
+    document.removeEventListener('click', state.clickHandler, true);
+  }
+  if (state.observer) state.observer.disconnect();
+  if (state.overlay?.isConnected) state.overlay.remove();
+
+  delete window.__virusDetectorBlockerState;
+  delete window.__virusDetectorInjected;
 }
 
 /**
@@ -488,6 +550,19 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
   detectNonArchive = detectNonArchive || false;
   mode = mode || 'full';
 
+  // 避免重复注入
+  if (window.__virusDetectorBlockerState || window.__virusDetectorInjected) return;
+  var blockerState = {
+    anchorClick: null,
+    patchedAnchorClick: null,
+    createElement: null,
+    patchedCreateElement: null,
+    clickHandler: null,
+    observer: null,
+    overlay: null
+  };
+  window.__virusDetectorBlockerState = blockerState;
+  window.__virusDetectorInjected = true;
   // 避免重复注入：使用排名制守卫，允许从低等级升级到高等级
   var MODE_RANK = { lightweight: 1, standard: 2, full: 3 };
   var newRank = MODE_RANK[mode] || 3;
@@ -518,7 +593,7 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
   // 当任何脚本调用 a.click() 程式化触发下载时拦截
   try {
     var _origAnchorClick = HTMLAnchorElement.prototype.click;
-    HTMLAnchorElement.prototype.click = function () {
+    var _patchedAnchorClick = function () {
       var href = this.href || this.getAttribute('href') || '';
       if (href && _isDangerousHref(href)) {
         // 弹确认窗
@@ -536,14 +611,17 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
       }
       return _origAnchorClick.call(this);
     };
+    blockerState.anchorClick = _origAnchorClick;
+    blockerState.patchedAnchorClick = _patchedAnchorClick;
+    HTMLAnchorElement.prototype.click = _patchedAnchorClick;
   } catch (e) { /* prototype hook 失败时静默降级 */ }
 
   // --- Hook 2: 拦截 document.createElement ---
   // 监控程序化创建的 <a> 元素，设置 href 时检查
   try {
-    var _origCreateElement = document.createElement.bind(document);
-    document.createElement = function (tagName, options) {
-      var el = _origCreateElement(tagName, options);
+    var _origCreateElement = document.createElement;
+    var _patchedCreateElement = function (tagName, options) {
+      var el = _origCreateElement.call(document, tagName, options);
       if (tagName && tagName.toLowerCase() === 'a') {
         // 对动态创建的 <a> 元素，hook 其 href setter
         var _origSetAttribute = el.setAttribute.bind(el);
@@ -576,6 +654,9 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
       }
       return el;
     };
+    blockerState.createElement = _origCreateElement;
+    blockerState.patchedCreateElement = _patchedCreateElement;
+    document.createElement = _patchedCreateElement;
   } catch (e) { /* createElement hook 失败时静默降级 */ }
 
   // ══════════════════════════════════════════════════════
@@ -706,7 +787,7 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
   // Part 4: 全局点击拦截 — 双层（新版精准 + 旧版宽泛）
   // ══════════════════════════════════════════════════════
 
-  document.addEventListener('click', function(e) {
+  var _clickHandler = function(e) {
     var target = e.target.closest('a, button, [role="button"], [onclick]');
     if (!target) return;
 
@@ -764,13 +845,19 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
       }
       return false;
     }
-  }, true);
+  };
+  blockerState.clickHandler = _clickHandler;
+  document.addEventListener('click', _clickHandler, true);
 
   // ══════════════════════════════════════════════════════
   // Part 5: MutationObserver 动态监控（旧版能力）
   // 'lightweight' 模式下跳过（仅 JS hooks + click 拦截）
   // ══════════════════════════════════════════════════════
 
+  var observer = new MutationObserver(function() {
+    disableExistingDownloadButtons();
+  });
+  blockerState.observer = observer;
   if (mode !== 'lightweight') {
 
     var observer = new MutationObserver(function() {
@@ -789,20 +876,19 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
   // Part 6: 顶部红色警告横幅（仅 'full' 模式，≥100 分）
   // ══════════════════════════════════════════════════════
 
-  if (mode === 'full') {
-    if (!document.getElementById('__virus_detector_overlay')) {
-      var overlay = document.createElement('div');
-      overlay.id = '__virus_detector_overlay';
-      overlay.innerHTML =
-        '<div style="position:fixed;top:0;left:0;right:0;z-index:2147483646;' +
-        'background:linear-gradient(135deg,#b71c1c,#c62828);color:#fff;' +
-        'text-align:center;padding:12px 20px;font-size:14px;font-weight:bold;' +
-        'font-family:-apple-system,BlinkMacSystemFont,\'Microsoft YaHei\',sans-serif;' +
-        'box-shadow:0 2px 12px rgba(183,28,28,0.5);">' +
-        '⚠️ 风险警告：该网站被检测为疑似钓鱼/恶意网站，请勿输入个人信息或下载任何文件！' +
-        '</div>';
-      document.documentElement.appendChild(overlay);
-    }
+  if (!document.getElementById('__virus_detector_overlay')) {
+    var overlay = document.createElement('div');
+    overlay.id = '__virus_detector_overlay';
+    overlay.innerHTML =
+      '<div style="position:fixed;top:0;left:0;right:0;z-index:2147483646;' +
+      'background:linear-gradient(135deg,#b71c1c,#c62828);color:#fff;' +
+      'text-align:center;padding:12px 20px;font-size:14px;font-weight:bold;' +
+      'font-family:-apple-system,BlinkMacSystemFont,\'Microsoft YaHei\',sans-serif;' +
+      'box-shadow:0 2px 12px rgba(183,28,28,0.5);">' +
+      '⚠️ 风险警告：该网站被检测为疑似钓鱼/恶意网站，请勿输入个人信息或下载任何文件！' +
+      '</div>';
+    document.documentElement.appendChild(overlay);
+    blockerState.overlay = overlay;
   }
 }
 
@@ -1040,10 +1126,12 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
  */
 async function _applyWhoisUpdate(ctx, whoisResult) {
   const { domain, tabId, syncScore, syncBreakdown, correctUrl, officialName } = ctx;
+  let currentUrl = '';
 
   // 竞态条件检查：用户是否已导航到其他页面
   try {
     const tab = await chrome.tabs.get(tabId);
+    currentUrl = tab.url || '';
     const currentDomain = UrlUtils.extractHostname(tab.url || '');
     if (currentDomain !== domain) {
       console.log('[ServiceWorker] Whois结果过期（用户已导航）:', domain, '→', currentDomain);
@@ -1052,6 +1140,12 @@ async function _applyWhoisUpdate(ctx, whoisResult) {
   } catch (e) {
     // 标签页已关闭
     console.log('[ServiceWorker] Whois结果过期（标签页已关闭）:', tabId);
+    return;
+  }
+
+  if (await isWhitelisted(currentUrl)) {
+    await removeDownloadBlocker(tabId);
+    setIconWhitelist(tabId);
     return;
   }
 
@@ -1159,6 +1253,11 @@ async function _postReportToWorker(reportType, domain, note) {
 }
 
 // ==================== 事件监听 ====================
+
+// 新文档提交后清除上一个页面的认证交互标记；当前页面的 Content Script 会按需重新标记。
+chrome.webNavigation.onCommitted.addListener((details) => {
+  if (details.frameId === 0) _authenticationTabs.delete(details.tabId);
+});
 
 // 页面导航完成
 chrome.webNavigation.onCompleted.addListener(async (details) => {
@@ -1413,6 +1512,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const type = message.type;
 
   switch (type) {
+    case 'AUTH_INTERACTION_DETECTED': {
+      const tabId = sender.tab ? sender.tab.id : null;
+      if (!tabId) { sendResponse({ received: false }); return false; }
+      _authenticationTabs.add(tabId);
+      removeDownloadBlocker(tabId).then(() => {
+        sendResponse({ received: true });
+      });
+      return true;
+    }
+
     case MSG_TYPES.PAGE_ANALYSIS_RESULT:
     case 'PAGE_ANALYSIS_RESULT': {
       const tabId = sender.tab ? sender.tab.id : null;
@@ -1503,6 +1612,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const url = message.payload?.url || '';
         if (url) {
           await addToWhitelist(url);
+          await removeDownloadBlocker(tabs[0].id);
           // 更新当前标签页状态
           const ts = await loadTabState(tabs[0].id);
           ts.isWhitelisted = true;
@@ -1787,8 +1897,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     case 'BULK_UPDATE_WHITELIST':
     case MSG_TYPES.BULK_UPDATE_WHITELIST: {
       const domains = (message.payload && message.payload.domains) ? message.payload.domains : [];
-      saveWhitelist(domains).then(() => {
+      saveWhitelist(domains).then(async () => {
         _whitelistCache = new Set(domains);
+        await removeBlockersFromWhitelistedTabs();
         console.log('[ServiceWorker] 白名单已批量更新:', domains.length, '个域名');
         sendResponse({ success: true, count: domains.length });
       }).catch(e => {
@@ -1845,6 +1956,7 @@ chrome.notifications.onButtonClicked.addListener(async (notifId, btnIdx) => {
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   await clearTabState(tabId);
   _warningCooldown.delete(tabId);
+  _authenticationTabs.delete(tabId);
 });
 
 // 安装/更新

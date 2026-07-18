@@ -809,6 +809,14 @@ const DOMAIN_DATABASE = [
     keywords: ['Github', 'GitHub'],
     isChineseBrand: false
   },
+  {
+    name: 'GitLab',
+    officialDomains: ['gitlab.com'],
+    correctUrl: 'https://gitlab.com',
+    category: SOFTWARE_CATEGORIES.DEVELOPER,
+    keywords: ['GitLab', 'gitlab'],
+    isChineseBrand: false
+  },
 // ========== 系统工具 ==========
   {
     name: '驱动精灵',
