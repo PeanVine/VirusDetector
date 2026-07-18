@@ -23,6 +23,9 @@
   --wl-bg: #1a237e;
   --wl-color: #90caf9;
   --wl-border: #42a5f5;
+  --bl-bg: #4a0000;
+  --bl-color: #ff8a80;
+  --bl-border: #f44336;
 }
 
 [data-theme="light"] {
@@ -37,6 +40,9 @@
   --wl-bg: #e8eaf6;
   --wl-color: #283593;
   --wl-border: #5c6bc0;
+  --bl-bg: #fce4e4;
+  --bl-color: #b71c1c;
+  --bl-border: #e53935;
   --green: #4CAF50;
   --green-light: #E8F5E9;
   --green-dark: #2E7D32;
@@ -899,6 +905,24 @@ body {
   background: var(--wl-bg);
   color: var(--wl-color);
   border-color: var(--wl-border);
+}
+
+/* Blacklist Button */
+.blacklist-btn {
+  border-color: var(--border);
+  color: var(--text2);
+}
+
+.blacklist-btn:hover:not(:disabled) {
+  background: var(--bl-bg);
+  color: var(--bl-color);
+  border-color: var(--bl-border);
+}
+
+.blacklist-btn.active {
+  background: var(--bl-bg);
+  color: var(--bl-color);
+  border-color: var(--bl-border);
 }
 
 /* ===== Whitelist State ===== */

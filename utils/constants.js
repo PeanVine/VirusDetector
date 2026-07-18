@@ -197,7 +197,12 @@ export const MSG_TYPES = {
   GET_SETTINGS: 'GET_SETTINGS',
   UPDATE_SETTINGS: 'UPDATE_SETTINGS',
   BULK_UPDATE_WHITELIST: 'BULK_UPDATE_WHITELIST',
-  CHECK_UPDATE: 'CHECK_UPDATE'
+  CHECK_UPDATE: 'CHECK_UPDATE',
+  // 站点黑名单
+  ADD_SITE_BLACKLIST: 'ADD_SITE_BLACKLIST',
+  REMOVE_SITE_BLACKLIST: 'REMOVE_SITE_BLACKLIST',
+  GET_SITE_BLACKLIST: 'GET_SITE_BLACKLIST',
+  CLEAR_SITE_BLACKLIST: 'CLEAR_SITE_BLACKLIST'
 };
 
 // ==================== 存储键 ====================
@@ -207,6 +212,7 @@ export const STORAGE_KEYS = {
   SSL_CACHE: 'ssl_cache_',
   GLOBAL_SETTINGS: 'global_settings',
   WHITELIST: 'whitelist',
+  SITE_BLACKLIST: 'site_blacklist',
   DOWNLOAD_BLACKLIST: 'download_blacklist',
   PENDING_DOWNLOADS: 'pending_downloads',
   USER_REPORTS: 'user_reports',
@@ -272,6 +278,10 @@ export const DOWNLOAD_VALID_DAYS_THRESHOLD = 365;
 
 /** 下载链接域名注册天数阈值（天），低于此值视为新域名 */
 export const DOWNLOAD_CREATION_DAYS_THRESHOLD = 90;
+
+// ==================== 站点黑名单 ====================
+/** 站点域名命中黑名单时的基础高分（直接触发警告流程） */
+export const SCORE_SITE_BLACKLIST = 60;
 
 // ==================== 下载域名黑名单 ====================
 /** 下载域名命中黑名单时的额外加分 */

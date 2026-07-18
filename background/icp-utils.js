@@ -202,6 +202,11 @@ const ICP_EXEMPT_DOMAINS = new Set([
   'arpa',          // 根域: DNS 基础设施
   'in-addr.arpa',  // RFC 1035: IPv4 反向解析
   'ip6.arpa',      // RFC 3596: IPv6 反向解析
+
+  // —— 品牌顶级域名（Brand TLD，完全由对应企业控制，无需 ICP 备案）——
+  'google',        // Google Registry（如 ai.google, cloud.google）
+  'microsoft',     // Microsoft Corporation
+  'apple',         // Apple Inc.
 ]);
 
 /**

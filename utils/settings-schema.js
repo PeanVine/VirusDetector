@@ -503,7 +503,18 @@ export const SECTIONS = [
     ]
   },
 
-  // ========== 10. 白名单 ==========
+  // ========== 10. 站点黑名单 ==========
+  {
+    id: 'site-blacklist',
+    label: '站点黑名单',
+    iconSVG: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+    description: '管理已知的恶意网站域名。黑名单中的网站将被直接标记为高风险并触发警告。每行一个域名。',
+    mode: 'basic',
+    type: 'custom',
+    renderFn: '_renderSiteBlacklistSection'
+  },
+
+  // ========== 11. 白名单 ==========
   {
     id: 'whitelist',
     label: '白名单',

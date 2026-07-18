@@ -46,6 +46,7 @@
     detailsSection: $('details-section'),
     refreshBtn: $('refresh-btn'),
     whitelistBtn: $('whitelist-btn'),
+    blacklistBtn: $('blacklist-btn'),
     // 刻度尺相关元素
     safeScoreIcon: $('safe-score-icon'),
     safeGaugeIndicator: $('safe-gauge-indicator'),
@@ -176,6 +177,16 @@
     } else {
       els.whitelistBtn.innerHTML = ICONS.star + '<span class="btn-label">加入白名单</span>';
       els.whitelistBtn.classList.remove('active');
+    }
+  }
+
+  function updateBlacklistButton(isBlacklisted) {
+    if (isBlacklisted) {
+      els.blacklistBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><span class="btn-label">移出黑名单</span>';
+      els.blacklistBtn.classList.add('active');
+    } else {
+      els.blacklistBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg><span class="btn-label">加入黑名单</span>';
+      els.blacklistBtn.classList.remove('active');
     }
   }
 
@@ -355,6 +366,7 @@
     if (data.isWhitelisted) {
       showWhitelisted(data);
       updateWhitelistButton(true);
+      updateBlacklistButton(!!data.isSiteBlacklisted);
       return;
     }
 
@@ -365,6 +377,7 @@
     }
     updateDetails(data.ruleResults);
     updateWhitelistButton(false);
+    updateBlacklistButton(!!data.isSiteBlacklisted);
   }
 
   // ==================== 按钮事件 ====================
@@ -534,6 +547,44 @@
       console.error('[Popup] 白名单操作失败:', e);
     }
     els.whitelistBtn.disabled = false;
+  });
+
+  // 站点黑名单按钮
+  els.blacklistBtn.addEventListener('click', async () => {
+    els.blacklistBtn.disabled = true;
+    try {
+      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tabs.length === 0) return;
+      const url = tabs[0].url || '';
+      if (!url || !url.startsWith('http')) return;
+
+      const domain = new URL(url).hostname;
+
+      // 先检查是否已在站点黑名单中
+      const resp = await chrome.runtime.sendMessage({ type: 'GET_SITE_BLACKLIST' });
+      const blacklist = (resp && resp.data) ? resp.data : {};
+      const isCurrentlyBlacklisted = blacklist.hasOwnProperty(domain);
+
+      if (isCurrentlyBlacklisted) {
+        // 已在黑名单中 → 移除
+        await chrome.runtime.sendMessage({
+          type: 'REMOVE_SITE_BLACKLIST',
+          payload: { domain }
+        });
+      } else {
+        // 添加到黑名单
+        await chrome.runtime.sendMessage({
+          type: 'ADD_SITE_BLACKLIST',
+          payload: { domain, addedBy: 'popup' }
+        });
+      }
+
+      await new Promise(r => setTimeout(r, 400));
+      await render();
+    } catch (e) {
+      console.error('[Popup] 黑名单操作失败:', e);
+    }
+    els.blacklistBtn.disabled = false;
   });
 
   // ==================== 版本号注入（从 manifest 读取，无需随版本号修改 HTML） ====================
