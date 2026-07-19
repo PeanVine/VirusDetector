@@ -357,6 +357,9 @@ async function isWhitelisted(url) {
  */
 async function addToWhitelist(url) {
   const domain = UrlUtils.extractHostname(url);
+  // 白名单与黑名单互斥：加入白名单前先移出黑名单中可能存在的同一域名
+  await SiteBlacklist.remove(domain);
+
   // 先用内存缓存快速判断，避免无谓的存储读取
   if (_whitelistCache && _whitelistCache.has(domain)) {
     console.log('[ServiceWorker] 域名已在白名单:', domain);
@@ -1611,6 +1614,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (tabs.length === 0) { sendResponse({ success: false, error: 'no tab' }); return; }
         const url = message.payload?.url || '';
         if (url) {
+          // addToWhitelist 内部已处理黑名单互斥
           await addToWhitelist(url);
           await removeDownloadBlocker(tabs[0].id);
           // 更新当前标签页状态
@@ -1777,6 +1781,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           const domain = message.payload?.domain || '';
           const addedBy = message.payload?.addedBy || 'manual';
           if (!domain) { sendResponse({ success: false, error: '缺少 domain' }); return; }
+          // 白名单与黑名单互斥：加入黑名单时自动移出白名单
+          const whitelist = await loadWhitelist();
+          if (whitelist.includes(domain)) {
+            await saveWhitelist(whitelist.filter(d => d !== domain));
+          }
           await SiteBlacklist.add(domain, { addedBy });
           sendResponse({ success: true, added: domain });
         } catch (e) { sendResponse({ success: false, error: e.message }); }
@@ -1841,27 +1850,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             _postReportToWorker(reportType, domain, note);
           }
 
-          // 自动操作：误报 → 加白名单；确认钓鱼 → 加下载黑名单（如果页面上有可疑下载域名）
+          // 自动操作
           if (reportType === 'false_positive') {
-            if (reportSettings.autoWhitelistFalsePositive !== false) {
-              await addToWhitelist('https://' + domain);
-            }
-            // 清除该域名的缓存
+            // 用户认为该网站安全：加入白名单（addToWhitelist 内部已处理黑名单互斥），清除缓存
+            await addToWhitelist('https://' + domain);
             await CacheManager.remove(domain);
-            // 更新当前活跃标签页状态
-            const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-            if (tabs.length > 0) {
-              const ts = await loadTabState(tabs[0].id);
-              ts.isWhitelisted = true;
-              ts.score = 0;
-              ts.riskLevel = RISK_LEVEL.SAFE;
-              ts.isAnalyzed = true;
-              await saveTabState(tabs[0].id, ts);
-              setIconWhitelist(tabs[0].id);
-            }
+            console.log('[ServiceWorker] 误报已处理：加入白名单:', domain);
             sendResponse({ success: true, autoAction: 'whitelisted' });
           } else if (reportType === 'confirmed_phish') {
-            // 确认钓鱼：将页面上的跨域下载域名加入黑名单
+            // 确认钓鱼：移出白名单（互斥），同时将页面上的跨域下载域名加入下载黑名单
+            await removeFromWhitelist('https://' + domain);
             const ts = await loadTabState((await chrome.tabs.query({ active: true, currentWindow: true }))[0]?.id || 0);
             if (ts && ts.linkMetrics && ts.linkMetrics.archiveDownloadLinks) {
               const crossDomainLinks = ts.linkMetrics.archiveDownloadLinks.filter(l => l.isCrossDomain);
