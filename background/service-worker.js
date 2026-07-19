@@ -33,7 +33,7 @@ import {
   SCORE_THRESHOLD, DOWNLOAD_CONFIRM_THRESHOLD, RISK_LEVEL, MSG_TYPES,
   STORAGE_KEYS, CACHE_TTL, DETECT_NON_ARCHIVE_FILES_DEFAULT,
   VERSION, REPORT_API_URL, GITHUB_RELEASES_API_URL, GITHUB_RELEASES_PAGE,
-  ICP_API_CONFIG
+  ICP_API_CONFIG, SCORE_SITE_BLACKLIST
 } from '../utils/constants.js';
 import { SETTINGS_DEFAULTS } from '../utils/settings-schema.js';
 
@@ -759,12 +759,13 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
   // 'lightweight' 模式下跳过（仅 JS hooks + click 拦截，无视觉禁用）
   // ══════════════════════════════════════════════════════
 
+  var disableExistingDownloadButtons = function() {};
   if (mode !== 'lightweight') {
 
     // 移除所有链接的 download 属性（防止强制下载 + 右键另存为绕过）
     document.querySelectorAll('a[download]').forEach(function(a) { a.removeAttribute('download'); });
 
-    function disableExistingDownloadButtons() {
+    disableExistingDownloadButtons = function() {
       // 3a. 禁用所有带下载文本的交互元素
       var allInteractive = document.querySelectorAll('a, button, [role="button"], input[type="submit"], input[type="button"]');
       for (var j = 0; j < allInteractive.length; j++) {
@@ -777,7 +778,7 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
           if (el.tagName === 'A') {
             el.removeAttribute('href');
             el.setAttribute('data-original-href', el.href || '');
-          }
+          };
           el.setAttribute('disabled', 'disabled');
           el.classList.add('virus-detector-blocked');
         }
