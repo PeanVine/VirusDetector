@@ -26,13 +26,15 @@ import { CacheManager } from './cache-manager.js';
 import { DownloadBlacklist } from './download-blacklist.js';
 import { SiteBlacklist } from './site-blacklist.js';
 import { ResourceResolver } from './resource-resolver/index.js';
-import { registerNonChineseBrandDomains } from './icp-utils.js';
+import { registerNonChineseBrandDomains, IcpUtils } from './icp-utils.js';
+import { IcpApiClient } from './icp-api.js';
 import { UrlUtils } from '../utils/url-utils.js';
 import {
   SCORE_THRESHOLD, DOWNLOAD_CONFIRM_THRESHOLD, RISK_LEVEL, MSG_TYPES,
   STORAGE_KEYS, CACHE_TTL, DETECT_NON_ARCHIVE_FILES_DEFAULT,
-  SCORE_SITE_BLACKLIST,
-  VERSION, REPORT_API_URL, GITHUB_RELEASES_API_URL, GITHUB_RELEASES_PAGE
+  VERSION, REPORT_API_URL, GITHUB_RELEASES_API_URL, GITHUB_RELEASES_PAGE,
+  UPDATE_VERSION_API_URL, UPDATE_CHANNEL, UPDATE_CHECK_TIMEOUT_MS, UPDATE_RETRY_DELAY_MINUTES,
+  ICP_API_CONFIG, SCORE_SITE_BLACKLIST
 } from '../utils/constants.js';
 import { SETTINGS_DEFAULTS } from '../utils/settings-schema.js';
 
@@ -50,11 +52,38 @@ import { SETTINGS_DEFAULTS } from '../utils/settings-schema.js';
  * @param {string} url
  * @returns {boolean} true 表示应跳过（不分析）
  */
+
+
+/**
+ * 判断主机名是否为内网/保留地址（RFC 1918 等），这类地址应跳过整站检测。
+ * 覆盖：回环 127.0.0.0/8、私有 10.0.0.0/8、192.168.0.0/16、172.16.0.0/12、
+ * 链路本地 169.254.0.0/16、以及 localhost。
+ * @param {string} hostname
+ * @returns {boolean}
+ */
+function isPrivateOrLocalIp(hostname) {
+  if (!hostname) return false;
+  if (hostname === 'localhost') return true;
+  const m = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!m) return false;
+  const a = +m[1], b = +m[2];
+  if (a > 255 || b > 255) return false;
+  if (a === 127) return true;                          // 127.0.0.0/8 回环
+  if (a === 10) return true;                           // 10.0.0.0/8 私有
+  if (a === 192 && b === 168) return true;             // 192.168.0.0/16 私有（路由器/NAS/开发服务器）
+  if (a === 172 && b >= 16 && b <= 31) return true;    // 172.16.0.0/12 私有
+  if (a === 169 && b === 254) return true;             // 169.254.0.0/16 链路本地
+  return false;
+}
+
 function shouldSkipUrl(url) {
   if (!url || typeof url !== 'string') return true;
   try {
-    const protocol = new URL(url).protocol;
-    return protocol !== 'http:' && protocol !== 'https:';
+    const u = new URL(url);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return true;
+    // 内网/保留地址：整站跳过检测，避免对 192.168.x.x 等局域网地址误报
+    if (isPrivateOrLocalIp(u.hostname)) return true;
+    return false;
   } catch (e) {
     return true; // 无法解析的 URL 视为应跳过
   }
@@ -119,54 +148,150 @@ function compareVersions(a, b) {
 }
 
 /**
- * 从 GitHub Releases API 检查最新版本，结果存入 chrome.storage.local。
- * 公开仓库无需认证，24h 周期远低于 60次/小时的速率限制。
+ * 判定更新渠道：
+ * - UPDATE_CHANNEL 常量为 'store' / 'manual' 时直接使用（上架打包时由构建脚本改写为 'store'）
+ * - 'auto' 时根据 manifest.update_url 判定：商店安装会被商店注入该字段，
+ *   手动安装（开发者模式 / zip 解包）则为 undefined
+ */
+function getUpdateChannel() {
+  if (UPDATE_CHANNEL === 'store' || UPDATE_CHANNEL === 'manual') return UPDATE_CHANNEL;
+  return chrome.runtime.getManifest().update_url ? 'store' : 'manual';
+}
+
+/** 带超时的 fetch；超时产生的 AbortError 统一改写为可读的超时错误 */
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), UPDATE_CHECK_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error(`请求超时（>${UPDATE_CHECK_TIMEOUT_MS / 1000}s）`);
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 主源：Cloudflare Worker 版本代理 */
+async function fetchVersionFromWorker() {
+  const resp = await fetchWithTimeout(UPDATE_VERSION_API_URL, {
+    headers: { 'Accept': 'application/json' }
+  });
+  if (!resp.ok) throw new Error(`Worker HTTP ${resp.status}`);
+  const data = await resp.json();
+  if (!data || typeof data.version !== 'string' || !/^\d+\.\d+/.test(data.version)) {
+    throw new Error('Worker 返回数据格式无效');
+  }
+  return {
+    version: data.version,
+    releaseUrl: data.releaseUrl || GITHUB_RELEASES_PAGE,
+    releaseNotes: typeof data.releaseNotes === 'string' ? data.releaseNotes : '',
+    publishedAt: data.publishedAt || null
+  };
+}
+
+/** 回退源：GitHub Releases API 直连（未认证 60次/小时/IP，共享出口 IP 下易被限流） */
+async function fetchVersionFromGitHub() {
+  const resp = await fetchWithTimeout(GITHUB_RELEASES_API_URL, {
+    headers: {
+      'Accept': 'application/vnd.github+json',
+      'User-Agent': `VirusDetector/${chrome.runtime.getManifest().version}`
+    }
+  });
+  if (!resp.ok) throw new Error(`GitHub HTTP ${resp.status}`);
+  const release = await resp.json();
+  const version = String(release.tag_name || '').replace(/^v/i, '');
+  if (!version) throw new Error('GitHub 返回数据缺少 tag_name');
+  return {
+    version,
+    releaseUrl: release.html_url || GITHUB_RELEASES_PAGE,
+    releaseNotes: String(release.body || '').substring(0, 2000),
+    publishedAt: release.published_at || null
+  };
+}
+
+/**
+ * 检查更新，结果存入 chrome.storage.local。
+ *
+ * - 商店渠道（store）：跳过远程检查，由浏览器商店自动更新
+ * - 手动渠道（manual）：Worker 代理 → GitHub API 直连，逐级回退
+ * - 全部失败时保留上次成功的版本信息，仅更新错误状态，并提前安排重试
+ * - 成功后恢复 24 小时周期的定时检查
  */
 async function checkForUpdate() {
-  const localVersion = VERSION;
-  console.log('[ServiceWorker] 正在检查更新，当前版本:', localVersion);
-  try {
-    const resp = await fetch(GITHUB_RELEASES_API_URL, {
-      headers: {
-        'Accept': 'application/vnd.github+json',
-        'User-Agent': `VirusDetector/${VERSION}`
-      }
-    });
-    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const localVersion = chrome.runtime.getManifest().version;
+  const channel = getUpdateChannel();
+  console.log('[ServiceWorker] 正在检查更新，当前版本:', localVersion, '渠道:', channel);
 
-    const release = await resp.json();
-    const tagName = release.tag_name || '';
-    const remoteVersion = tagName.replace(/^v/i, '');
-    const hasUpdate = compareVersions(remoteVersion, localVersion) > 0;
-
-    const info = {
-      lastCheck: Date.now(),
-      latestVersion: remoteVersion,
-      currentVersion: localVersion,
-      hasUpdate,
-      releaseUrl: release.html_url || GITHUB_RELEASES_PAGE,
-      releaseNotes: (release.body || '').substring(0, 2000),
-      publishedAt: release.published_at || null,
-      error: null
-    };
-    await chrome.storage.local.set({ [STORAGE_KEYS.UPDATE_INFO]: info });
-
-    console.log('[ServiceWorker] 更新检查完成:', hasUpdate ? `发现新版本 v${remoteVersion}` : '已是最新版本');
-  } catch (e) {
-    console.error('[ServiceWorker] 更新检查失败:', e.message);
+  if (channel === 'store') {
     await chrome.storage.local.set({
       [STORAGE_KEYS.UPDATE_INFO]: {
         lastCheck: Date.now(),
+        channel,
         latestVersion: null,
         currentVersion: localVersion,
         hasUpdate: false,
         releaseUrl: null,
         releaseNotes: null,
         publishedAt: null,
-        error: e.message
+        error: null
       }
     });
+    return;
   }
+
+  const sources = [
+    ['Worker 代理', fetchVersionFromWorker],
+    ['GitHub API', fetchVersionFromGitHub]
+  ];
+
+  let lastError = null;
+  for (const [name, fetchVersion] of sources) {
+    try {
+      const data = await fetchVersion();
+      const hasUpdate = compareVersions(data.version, localVersion) > 0;
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.UPDATE_INFO]: {
+          lastCheck: Date.now(),
+          channel,
+          latestVersion: data.version,
+          currentVersion: localVersion,
+          hasUpdate,
+          releaseUrl: data.releaseUrl,
+          releaseNotes: data.releaseNotes,
+          publishedAt: data.publishedAt,
+          error: null
+        }
+      });
+      // 恢复 24h 周期检查
+      await chrome.alarms.create('updateCheck', { periodInMinutes: 1440 });
+      console.log(`[ServiceWorker] 更新检查完成（${name}）:`, hasUpdate ? `发现新版本 v${data.version}` : '已是最新版本');
+      return;
+    } catch (e) {
+      lastError = e;
+      console.warn(`[ServiceWorker] 更新源「${name}」失败: ${e.message}`);
+    }
+  }
+
+  // 全部更新源失败：保留上次成功的版本信息（按当前版本重新计算 hasUpdate），仅更新错误状态
+  const prev = (await chrome.storage.local.get(STORAGE_KEYS.UPDATE_INFO))[STORAGE_KEYS.UPDATE_INFO];
+  const latestVersion = prev?.latestVersion ?? null;
+  console.error('[ServiceWorker] 更新检查失败:', lastError?.message);
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.UPDATE_INFO]: {
+      lastCheck: Date.now(),
+      channel,
+      latestVersion,
+      currentVersion: localVersion,
+      hasUpdate: latestVersion ? compareVersions(latestVersion, localVersion) > 0 : false,
+      releaseUrl: prev?.releaseUrl ?? null,
+      releaseNotes: prev?.releaseNotes ?? null,
+      publishedAt: prev?.publishedAt ?? null,
+      error: lastError?.message || '未知错误'
+    }
+  });
+  // 安排提前重试（成功后会恢复 24h 周期）
+  await chrome.alarms.create('updateCheck', { delayInMinutes: UPDATE_RETRY_DELAY_MINUTES });
 }
 
 // ==================== 缓存清洗 ====================
@@ -736,12 +861,13 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
   // 'lightweight' 模式下跳过（仅 JS hooks + click 拦截，无视觉禁用）
   // ══════════════════════════════════════════════════════
 
+  var disableExistingDownloadButtons = function() {};
   if (mode !== 'lightweight') {
 
     // 移除所有链接的 download 属性（防止强制下载 + 右键另存为绕过）
     document.querySelectorAll('a[download]').forEach(function(a) { a.removeAttribute('download'); });
 
-    function disableExistingDownloadButtons() {
+    disableExistingDownloadButtons = function() {
       // 3a. 禁用所有带下载文本的交互元素
       var allInteractive = document.querySelectorAll('a, button, [role="button"], input[type="submit"], input[type="button"]');
       for (var j = 0; j < allInteractive.length; j++) {
@@ -754,7 +880,7 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
           if (el.tagName === 'A') {
             el.removeAttribute('href');
             el.setAttribute('data-original-href', el.href || '');
-          }
+          };
           el.setAttribute('disabled', 'disabled');
           el.classList.add('virus-detector-blocked');
         }
@@ -854,25 +980,16 @@ function injectBlockerFunc(archiveUrls, detectNonArchive, mode) {
 
   // ══════════════════════════════════════════════════════
   // Part 5: MutationObserver 动态监控（旧版能力）
-  // 'lightweight' 模式下跳过（仅 JS hooks + click 拦截）
   // ══════════════════════════════════════════════════════
-
   var observer = new MutationObserver(function() {
     disableExistingDownloadButtons();
   });
   blockerState.observer = observer;
-  if (mode !== 'lightweight') {
 
-    var observer = new MutationObserver(function() {
-      disableExistingDownloadButtons();
-    });
-
-    if (document.body) {
-      observer.observe(document.body, { childList: true, subtree: true });
-      // 30 秒后停止观察（避免性能影响）
-      setTimeout(function() { observer.disconnect(); }, 30000);
-    }
-
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+    // 30 秒后停止观察（避免性能影响）
+    setTimeout(function() { observer.disconnect(); }, 30000);
   }
 
   // ══════════════════════════════════════════════════════
@@ -1043,12 +1160,18 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
     }
   }
 
+  // ─── ICP 备案 API 核验已改为异步（见 _launchAsyncIcpCheck）───
+  // 同步阶段仅依赖页面文本扫描给出规则三评分，避免 API 网络延迟（最长 16s）
+  // 拖慢整站检测。API 核验结果通过异步回调增量修正评分。
+  const settings = await getSettings();
+
   const ctx = {
     url: tabState.url || url,
     domain: tabState.domain || domain,
     icpStrings: tabState.icpStrings || [],
     textSignals: tabState.textSignals || null,
     hasIcpGovLink: tabState.hasIcpGovLink || false,
+    icpApi: null, // ICP API 改为异步核验，同步阶段传 null 走页面文本扫描
     linkMetrics: linkMetrics || tabState.linkMetrics || null,
     downloadState: tabState.downloadState || { hasDownloadedArchive: false },
     pageMetrics: pageMetrics || tabState.pageMetrics || null,
@@ -1057,8 +1180,7 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
 
   // 运行评分引擎（两阶段：同步首屏 + Whois异步补充）
   try {
-    // 获取当前设置（含阈值覆盖）
-    const settings = await getSettings();
+    // 获取当前设置（含阈值覆盖，已在上方 ICP 核验前读取并缓存）
 
     // ═══ 阶段1：同步评估（规则一~五，不含Whois网络请求）═══
     const syncResult = await ScoringEngine.evaluateSync(ctx, settings);
@@ -1125,6 +1247,35 @@ async function analyzePage(tabId, url, domain, pageMetrics, linkMetrics) {
       }).catch(e => {
         console.error('[ServiceWorker] Whois异步补充失败:', domain, e);
       });
+    }
+
+    // ═══ 异步 ICP 备案 API 核验（不阻塞主流程） ═══
+    // 同步阶段已通过页面文本扫描给出规则三评分；
+    // 此处异步调用 API 核验，可能纠正两类情况：
+    //   ① 合法备案但页面未展示 → 原 +50 → 修正为 0（消除误报）
+    //   ② 页面展示备案号但 API 确认域名无备案 → 原 0 → 修正为 +50（盗用/伪造）
+    if (!syncResult.isConfirmedOfficial && !IcpUtils.isIcpExempt(domain)) {
+      const rule3Result = syncResult.breakdown.rule3;
+      const icpSnapshot = {
+        domain, tabId,
+        pageUrl: tabState.url || url,
+        icpStrings: tabState.icpStrings || [],
+        hasIcpGovLink: tabState.hasIcpGovLink || false,
+        impersonating: syncResult.breakdown.rule1.triggered || false,
+        oldRule3: {
+          score: rule3Result.score || 0,
+          triggered: rule3Result.triggered || false,
+          icpFound: rule3Result.icpFound || false,
+          icpNumbers: rule3Result.icpNumbers || [],
+          icpVerified: rule3Result.icpVerified || false,
+          icpBlacklisted: rule3Result.icpBlacklisted || false
+        },
+        syncScore: syncResult.totalScore,
+        syncBreakdown: syncResult.breakdown,
+        correctUrl: syncResult.correctUrl,
+        officialName: syncResult.officialName
+      };
+      _launchAsyncIcpCheck(icpSnapshot);
     }
 
   } catch (error) {
@@ -1212,6 +1363,176 @@ async function _applyWhoisUpdate(ctx, whoisResult) {
     domain, oldScore, newScore,
     creationDays: whoisResult.domainAgeResult.creationDays
   });
+}
+
+// ==================== ICP 异步核验 ====================
+
+/**
+ * 异步发起 ICP 备案 API 查询（不阻塞主流程）。
+ *
+ * 设计意图：
+ *   同步阶段（evaluateSync）仅依赖页面文本扫描给出规则三评分，
+ *   避免 API 网络延迟拖慢整站检测。本函数在同步评分完成后异步调用
+ *   IcpApiClient.query()，结果返回后通过 _applyIcpUpdate 增量修正评分。
+ *
+ * 可以纠正的两类情况：
+ *   ① 合法备案但页面未展示备案号 → 原 +50 → 修正为 0（消除误报）
+ *   ② 页面展示备案号但 API 确认域名无备案 → 原 0 → 修正为 +50（盗用/伪造）
+ *
+ * @param {Object} snapshot - 同步阶段的上下文快照
+ */
+async function _launchAsyncIcpCheck(snapshot) {
+  try {
+    const settings = await getSettings();
+
+    // 按设置开关覆盖各 provider 的 enabled
+    const effProviders = ICP_API_CONFIG.providers.map(p => {
+      const clone = { ...p };
+      if (p.name === 'uapis') clone.enabled = settings.icpApiProviderUapis !== false;
+      if (p.name === 'apihz') clone.enabled = settings.icpApiProviderApihz !== false;
+      return clone;
+    });
+    const icpOpts = {
+      enabled: settings.icpApiEnabled !== false,
+      providers: effProviders,
+      apihzId: settings.icpApiApiahzId || undefined,
+      apihzKey: settings.icpApiApiahzKey || undefined
+    };
+
+    const icpApi = await IcpApiClient.query(snapshot.domain, icpOpts);
+
+    // API 未返回有效结果（全部源失败/限流/禁用）→ 保持原评分
+    if (!icpApi || !icpApi.queried) {
+      console.log('[ServiceWorker] ICP API 异步查询未返回有效结果，保持原评分:', snapshot.domain);
+      return;
+    }
+
+    await _applyIcpUpdate(snapshot, icpApi);
+  } catch (e) {
+    console.warn('[ServiceWorker] ICP 异步核验失败:', snapshot.domain, e && e.message);
+  }
+}
+
+/**
+ * 应用 ICP API 异步查询结果，增量更新标签页状态。
+ * 仅在分数变化或跨过阈值时更新图标/触发警告流程。
+ *
+ * @param {Object} snapshot - 同步阶段的上下文快照
+ * @param {Object} icpApi - IcpApiClient.query() 的返回结果
+ */
+async function _applyIcpUpdate(snapshot, icpApi) {
+  const { domain, tabId } = snapshot;
+
+  // 竞态条件检查：用户是否已导航到其他页面
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const currentDomain = UrlUtils.extractHostname(tab.url || '');
+    if (currentDomain !== domain) {
+      console.log('[ServiceWorker] ICP结果过期（用户已导航）:', domain, '→', currentDomain);
+      return;
+    }
+  } catch (e) {
+    console.log('[ServiceWorker] ICP结果过期（标签页已关闭）:', tabId);
+    return;
+  }
+
+  // 白名单检查
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (await isWhitelisted(tab.url || '')) return;
+  } catch (e) { return; }
+
+  // 加载最新 tabState
+  const tabState = await loadTabState(tabId);
+  if (tabState.domain !== domain) {
+    console.log('[ServiceWorker] ICP结果过期（tabState域名不匹配）:', domain);
+    return;
+  }
+
+  // 重新执行规则三（仅注入 API 结果，其余参数与同步阶段一致）
+  // 注意：同步阶段 _evaluateRule3 的 pageText 和 textSignals 均为 undefined，
+  // 此处保持一致以确保判定结果仅受 icpApi 参数影响。
+  const settings = await getSettings();
+  setActiveSettings(settings);
+  const newRule3 = ScoringEngine._evaluateRule3(
+    domain,
+    undefined,                       // pageText（同步阶段亦未传递）
+    snapshot.icpStrings,
+    snapshot.hasIcpGovLink,
+    undefined,                       // textSignals（同步阶段亦未传递）
+    icpApi,
+    snapshot.impersonating
+  );
+  setActiveSettings(null);
+
+  const oldRule3Score = snapshot.oldRule3.score;
+  const newRule3Score = newRule3.score || 0;
+
+  // 分数未变化 → 仅更新 breakdown 中的 API 状态信息（供排查展示）
+  if (oldRule3Score === newRule3Score && snapshot.oldRule3.triggered === newRule3.triggered) {
+    const mergedBreakdown = { ...(tabState.ruleResults || snapshot.syncBreakdown) };
+    mergedBreakdown.rule3 = newRule3;
+    tabState.ruleResults = mergedBreakdown;
+    await saveTabState(tabId, tabState);
+    console.log('[ServiceWorker] ICP异步核验完成（分数未变）:', {
+      domain,
+      icpApiResult: icpApi.hasIcp ? '有备案' : '无备案',
+      rule3Score: newRule3Score
+    });
+    return;
+  }
+
+  // 分数变化 — 重新计算总分并更新所有状态
+  const mergedBreakdown = { ...(tabState.ruleResults || snapshot.syncBreakdown) };
+  mergedBreakdown.rule3 = newRule3;
+
+  const newTotalScore = Object.values(mergedBreakdown)
+    .reduce((sum, r) => sum + (r && r.score || 0), 0);
+  const oldTotalScore = tabState.score || snapshot.syncScore;
+
+  tabState.score = newTotalScore;
+  tabState.ruleResults = mergedBreakdown;
+  tabState.riskLevel = newTotalScore >= getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD)
+    ? RISK_LEVEL.WARNING : RISK_LEVEL.SAFE;
+  await saveTabState(tabId, tabState);
+
+  // 更新缓存
+  await CacheManager.set(domain, {
+    score: newTotalScore,
+    isMalicious: newTotalScore >= getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD),
+    correctUrl: snapshot.correctUrl,
+    ruleResults: sanitizeRuleResultsForCache(mergedBreakdown)
+  });
+
+  console.log('[ServiceWorker] ICP异步核验完成（分数已更新）:', {
+    domain,
+    icpApiResult: icpApi.hasIcp ? '有备案' : '无备案',
+    rule3: `${oldRule3Score} → ${newRule3Score}`,
+    total: `${oldTotalScore} → ${newTotalScore}`
+  });
+
+  const threshold = getEffectiveThreshold('scoreThreshold', SCORE_THRESHOLD);
+  const wasWarning = oldTotalScore >= threshold;
+  const isWarning = newTotalScore >= threshold;
+
+  if (isWarning && !wasWarning) {
+    // 分数从安全跨到危险 → 补触发警告流程
+    console.log('[ServiceWorker] ICP异步核验 → 分数跨过阈值，补触发警告:', {
+      domain, oldTotalScore, newTotalScore
+    });
+    await triggerWarningFlow(tabId, tabState);
+  } else if (!isWarning && wasWarning) {
+    // 分数从危险降回安全 → 清除警告状态
+    console.log('[ServiceWorker] ICP异步核验 → 分数降至阈值以下，清除警告:', {
+      domain, oldTotalScore, newTotalScore
+    });
+    setIconGreen(tabId, newTotalScore);
+    await removeDownloadBlocker(tabId);
+  } else if (isWarning) {
+    setIconRed(tabId);
+  } else {
+    setIconGreen(tabId, newTotalScore);
+  }
 }
 
 /**

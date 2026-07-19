@@ -303,7 +303,11 @@
         duplicateLinks.push({
           href: href.substring(0, 200),
           elementCount: elements.size,
-          isDownloadLink: isDownloadLink
+          isDownloadLink: isDownloadLink,
+          isCrossDomain: (() => {
+            try { return new URL(href, location.href).hostname !== location.host; }
+            catch (e) { return false; }
+          })()
         });
       }
     });
@@ -510,7 +514,9 @@
       if (cp > 0xFFFF) i++;
     }
     const cjkRatio = textLength > 0 ? cjkCount / textLength : 0;
-    const hasCJK = (cjkCount >= 30 && cjkRatio >= 0.08) || cjkCount >= 500;
+    // 与 background/icp-utils.js 的 detectCJKContent 保持同一判定口径：
+    // 放宽阈值以兼容中英混排的中文钓鱼页（详见 icp-utils.js 注释）。
+    const hasCJK = (cjkCount >= 20 && cjkRatio >= 0.02) || cjkCount >= 120;
 
     const lowerText = bodyText.toLowerCase();
     let promoKeywordMatchCount = 0;
