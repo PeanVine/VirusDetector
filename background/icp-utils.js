@@ -190,6 +190,7 @@ const ICP_EXEMPT_DOMAINS = new Set([
   // 本地/内网专用（RFC 6761/6762/8375，不暴露公网）
   'local',         // RFC 6762: 局域网 mDNS（打印机/NAS/树莓派）
   'localhost',     // RFC 6761: 本机回环（127.0.0.1）
+  '127.0.0.1',     // 同上
   'home.arpa',     // RFC 8375: 家庭内网
   'internal',      // ICANN 保留: 企业内部网络
   'test',          // RFC 6761: 开发测试
