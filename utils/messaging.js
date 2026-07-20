@@ -1,5 +1,3 @@
-import { MSG_TYPES } from './constants.js';
-
 /**
  * Virus Detector — 消息通信封装
  *

@@ -1802,7 +1802,9 @@ chrome.downloads.onCreated.addListener(async (downloadItem) => {
     } else {
       setIconGreen(tabId, newScore);
     }
+    setActiveSettings(null);
   } catch (e) {
+    setActiveSettings(null);
     console.error('[ServiceWorker] 下载处理失败:', e);
   }
 });

@@ -108,7 +108,7 @@ VirusDetector/
     ├── constants.js                   # 评分常量、阈值配置、黑名单参数
     ├── url-utils.js                   # 域名解析、PSL 主域提取、DoH DNS 查询
     ├── messaging.js                   # chrome.runtime 消息通信封装
-    └── trusted-platforms.js          # 可信平台白名单 —— UGC 平台跳过仿冒检测
+    └── trusted-platforms.js           # 可信平台白名单 —— UGC 平台跳过仿冒检测
 ```
 
 ### 技术特点
@@ -429,7 +429,7 @@ Timeline:  document_start       page load        content script reports      use
 | `storage` | 持久化评分状态、白名单、缓存 |
 | `downloads` | 监听下载事件、取消危险下载 |
 | `scripting` | 注入 Content Script 与下载拦截脚本 |
-| `alarms` | Manifest 中保留的定时任务权限；当前代码未调用 `chrome.alarms` |
+| `alarms` | 定时触发更新检查（`chrome.alarms.create` + `onAlarm` 监听器） |
 | `notifications` | 桌面风险通知 |
 | `webNavigation` | 监听页面导航以触发分析 |
 | `http://*/*`, `https://*/*` | 仅覆盖 HTTP/HTTPS 网站，避免在 `file://`、`data:`、`ftp:`、浏览器内部页面等非网页协议上运行 |
