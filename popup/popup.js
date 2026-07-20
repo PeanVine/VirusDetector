@@ -37,6 +37,7 @@
     blacklistPanel: $('blacklist-panel'), whitelistPanel: $('whitelist-panel'),
     scoreValue: $('score-value'),
     currentDomain: $('current-domain'),
+    warningDomain: $('warning-domain'),
     warningScoreValue: $('warning-score-value'),
     warningStatusText: $('warning-status-text'),
     officialLinkSection: $('official-link-section'),
@@ -245,6 +246,7 @@
     // 动态更新评分卡片（颜色、图标、刻度尺指示器）
     updateScoreDisplay(els.warningScoreValue, els.warningGaugeIndicator, els.warningScoreIcon, score, true);
     els.warningStatusText.textContent = '危险警告';
+    if (els.warningDomain) els.warningDomain.textContent = data.domain || '';
 
     if (data.correctUrl) {
       els.officialLinkSection.style.display = 'block';
