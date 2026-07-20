@@ -114,7 +114,7 @@ export class IcpApiClient {
 
     for (const provider of providers) {
       if (!provider.enabled) continue;                 // 未启用
-      if (provider.needKey) continue;                  // 需 key 且未提供则跳过
+      if (provider.needKey && (!provider.id || !provider.key)) continue;  // 需 key 且无内置凭据则跳过
       if (!_acquireRateLimit(provider)) continue;      // 限流：本周期跳过该源
 
       try {
