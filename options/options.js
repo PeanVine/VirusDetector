@@ -8,7 +8,7 @@
  */
 
 import { SETTINGS_DEFAULTS, SECTIONS, SENSITIVITY_PRESETS, SCHEMA_VERSION, validateSetting } from '../utils/settings-schema.js';
-import { STORAGE_KEYS, MSG_TYPES, VERSION } from '../utils/constants.js';
+import { STORAGE_KEYS, MSG_TYPES, VERSION, UPDATE_CHANNEL } from '../utils/constants.js';
 
 class SettingsApp {
   constructor() {
@@ -270,6 +270,21 @@ class SettingsApp {
             </div>
           </div>`;
 
+      case 'text':
+        return `
+          <div class="setting-row" data-key="${setting.key}" data-mode="${setting.mode || 'basic'}">
+            <div class="setting-info">
+              <div class="setting-label">${setting.label}</div>
+              <div class="setting-desc">${setting.desc}</div>
+            </div>
+            <div class="setting-control">
+              <input type="text" class="setting-input text-input" autocomplete="off" spellcheck="false"
+                data-key="${setting.key}" data-type="text"
+                value="${this._escapeHtml(value)}" placeholder="${setting.placeholder || ''}"
+                ${this._isInputDisabled(setting) ? 'disabled' : ''}>
+            </div>
+          </div>`;
+
       case 'action':
         const actionClass = setting.key === '_clearAllData' ? ' danger' : '';
         return `
@@ -307,6 +322,8 @@ class SettingsApp {
       } else if (type === 'number') {
         input.value = value;
       } else if (type === 'select') {
+        input.value = value;
+      } else if (type === 'text') {
         input.value = value;
       }
     }
@@ -525,6 +542,9 @@ class SettingsApp {
       case 'select':
         value = input.value;
         break;
+      case 'text':
+        value = input.value;
+        break;
       case 'theme':
         value = input.checked ? 'light' : 'dark';
         break;
@@ -712,7 +732,7 @@ class SettingsApp {
     try {
       const all = await chrome.storage.local.get(null);
       const keysToRemove = Object.keys(all).filter(k =>
-        k.startsWith('domain_cache_')
+        k.startsWith('domain_cache_') || k.startsWith('icp_api_v1_')
       );
       if (keysToRemove.length > 0) {
         await chrome.storage.local.remove(keysToRemove);
@@ -1230,10 +1250,35 @@ class SettingsApp {
 
   // ==================== 更新检测 ====================
 
+  /**
+   * 判定更新渠道（与 Service Worker 逻辑一致）：
+   * UPDATE_CHANNEL 常量优先；'auto' 时商店安装会被商店注入 manifest.update_url。
+   */
+  _getUpdateChannel() {
+    if (UPDATE_CHANNEL === 'store' || UPDATE_CHANNEL === 'manual') return UPDATE_CHANNEL;
+    return chrome.runtime.getManifest().update_url ? 'store' : 'manual';
+  }
+
   async _loadUpdateInfo() {
     const statusEl = document.getElementById('update-status');
     const downloadBtn = document.getElementById('download-update-btn');
+    const checkBtn = document.getElementById('check-update-btn');
     if (!statusEl) return;
+
+    // 商店渠道：由浏览器扩展商店自动更新，无需远程检查
+    if (this._getUpdateChannel() === 'store') {
+      statusEl.innerHTML = `
+        <div class="update-status up-to-date">
+          <div style="color:var(--green);font-weight:600;">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" style="vertical-align:-3px;margin-right:4px;"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+            商店版本
+          </div>
+          <div style="font-size:12px;color:var(--text2);margin-top:4px;">由浏览器扩展商店自动更新，无需手动检查</div>
+        </div>`;
+      if (checkBtn) checkBtn.style.display = 'none';
+      if (downloadBtn) downloadBtn.style.display = 'none';
+      return;
+    }
 
     try {
       const r = await chrome.storage.local.get(STORAGE_KEYS.UPDATE_INFO);
@@ -1243,7 +1288,14 @@ class SettingsApp {
         return;
       }
 
-      if (info.error) {
+      const timeAgo = this._formatRelativeTime(info.lastCheck);
+      // 本次检查失败但保留了上次成功结果时，展示上次结果并附加失败提示
+      const failedNote = info.error
+        ? `<div style="font-size:12px;color:var(--red);margin-top:6px;">⚠️ 本次检查失败（以下为上次成功结果）：${this._escapeHtml(info.error)}</div>`
+        : '';
+
+      if (info.error && !info.latestVersion) {
+        // 从未成功过，仅展示错误
         statusEl.innerHTML = `
           <div class="update-status error">
             <span style="color:var(--red);">⚠️ 检查失败</span>
@@ -1252,7 +1304,6 @@ class SettingsApp {
         return;
       }
 
-      const timeAgo = this._formatRelativeTime(info.lastCheck);
       if (info.hasUpdate) {
         statusEl.innerHTML = `
           <div class="update-status has-update">
@@ -1264,6 +1315,7 @@ class SettingsApp {
             <div class="about-row"><span class="about-label">最新版本</span><span class="about-value" style="color:var(--green);font-weight:700;">v${info.latestVersion}</span></div>
             ${info.publishedAt ? `<div class="about-row"><span class="about-label">发布日期</span><span class="about-value">${new Date(info.publishedAt).toLocaleDateString('zh-CN')}</span></div>` : ''}
             <div class="about-row"><span class="about-label">上次检查</span><span class="about-value">${timeAgo}</span></div>
+            ${failedNote}
           </div>`;
         if (downloadBtn && info.releaseUrl) {
           downloadBtn.href = info.releaseUrl;
@@ -1279,6 +1331,7 @@ class SettingsApp {
             <div class="about-row" style="margin-top:6px;"><span class="about-label">当前版本</span><span class="about-value">v${info.currentVersion}</span></div>
             <div class="about-row"><span class="about-label">最新版本</span><span class="about-value">v${info.latestVersion || info.currentVersion}</span></div>
             <div class="about-row"><span class="about-label">上次检查</span><span class="about-value">${timeAgo}</span></div>
+            ${failedNote}
           </div>`;
         if (downloadBtn) downloadBtn.style.display = 'none';
       }
@@ -1288,6 +1341,7 @@ class SettingsApp {
   }
 
   async _onCheckUpdate() {
+    if (this._getUpdateChannel() === 'store') return; // 商店渠道由浏览器自动更新
     const statusEl = document.getElementById('update-status');
     const btn = document.getElementById('check-update-btn');
     if (statusEl) statusEl.innerHTML = `<div class="update-status pending">
@@ -1418,6 +1472,9 @@ SettingsApp.prototype._loadStorageStats = async function () {
     const cacheKeys = Object.keys(all).filter(k =>
       k.startsWith('domain_cache_')
     );
+    const icpApiCacheKeys = Object.keys(all).filter(k =>
+      k.startsWith('icp_api_v1_')
+    );
     const tabStateKeys = Object.keys(all).filter(k => k.startsWith('tab_state_'));
     const whitelist = all[STORAGE_KEYS.WHITELIST] || [];
     const blacklist = all[STORAGE_KEYS.DOWNLOAD_BLACKLIST] || [];
@@ -1435,6 +1492,7 @@ SettingsApp.prototype._loadStorageStats = async function () {
         </div>
       </div>
       <div class="about-row"><span class="about-label">缓存记录</span><span class="about-value">${cacheKeys.length} 条</span></div>
+      <div class="about-row"><span class="about-label">ICP API 缓存</span><span class="about-value">${icpApiCacheKeys.length} 条</span></div>
       <div class="about-row"><span class="about-label">标签页状态</span><span class="about-value">${tabStateKeys.length} 个</span></div>
       <div class="about-row"><span class="about-label">白名单域名</span><span class="about-value">${Array.isArray(whitelist) ? whitelist.length : 0} 个</span></div>
       <div class="about-row"><span class="about-label">站点黑名单</span><span class="about-value">${typeof siteBlacklist === 'object' ? Object.keys(siteBlacklist).length : 0} 条</span></div>

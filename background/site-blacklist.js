@@ -21,7 +21,9 @@
  *   - 无自动过期（站点黑名单由用户手动管理）
  */
 
-import { STORAGE_KEYS, DOWNLOAD_BLACKLIST_MAX_ENTRIES } from '../utils/constants.js';
+import { 
+  STORAGE_KEYS, DOWNLOAD_BLACKLIST_MAX_ENTRIES
+} from '../utils/constants.js';
 import { UrlUtils } from '../utils/url-utils.js';
 
 export class SiteBlacklist {

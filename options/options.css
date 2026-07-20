@@ -664,6 +664,31 @@ html, body {
   width: 110px;
 }
 
+/* ===== Text input (apihz credentials etc.) ===== */
+.text-input {
+  width: 220px;
+  max-width: 100%;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-size: 13px;
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  transition: border-color var(--transition);
+}
+
+.text-input:focus {
+  border-color: var(--blue);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.15);
+}
+
+.text-input:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* ===== Select ===== */
 select {
   padding: 7px 30px 7px 10px;
