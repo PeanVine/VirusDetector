@@ -174,21 +174,20 @@
   function updateWhitelistButton(isWhitelisted) {
     const iconEl = els.whitelistBtn.querySelector('.btn-icon');
     if (isWhitelisted) {
-      if (iconEl) iconEl.innerHTML = ICONS.starOff;
+      els.whitelistBtn.innerHTML = ICONS.starOff;
       els.whitelistBtn.classList.add('active');
     } else {
-      if (iconEl) iconEl.innerHTML = ICONS.star;
+      els.whitelistBtn.innerHTML = ICONS.star ;
       els.whitelistBtn.classList.remove('active');
     }
   }
 
   function updateBlacklistButton(isBlacklisted) {
-    const iconEl = els.blacklistBtn.querySelector('.btn-icon');
     if (isBlacklisted) {
-      if (iconEl) iconEl.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+      els.blacklistBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
       els.blacklistBtn.classList.add('active');
     } else {
-      if (iconEl) iconEl.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+      els.blacklistBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
       els.blacklistBtn.classList.remove('active');
     }
   }
@@ -334,11 +333,22 @@
   }
 
   function showError(msg) {
-    els.loading.innerHTML = '<div style="text-align:center;padding:20px;">' +
-      '<p style="color:#F44336;font-size:14px;">' +
-      '<svg viewBox="0 0 20 20" width="14" height="14" style="vertical-align:middle;margin-right:4px;"><path d="M10 2L1 18h18L10 2z" fill="#F44336"/><path d="M10 7v4M10 14.5v.5" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>' +
-      (msg || '无法获取检测结果') + '</p>' +
-      '<p style="font-size:12px;color:#a0a0a0;margin-top:8px;">请确保已打开网页，点击"重新检测"重试</p></div>';
+    const container = document.createElement('div');
+    container.style.cssText = 'text-align:center;padding:20px;';
+
+    const errLine = document.createElement('p');
+    errLine.style.cssText = 'color:#F44336;font-size:14px;';
+    errLine.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14" style="vertical-align:middle;margin-right:4px;"><path d="M10 2L1 18h18L10 2z" fill="#F44336"/><path d="M10 7v4M10 14.5v.5" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
+    errLine.appendChild(document.createTextNode(msg || '无法获取检测结果'));
+    container.appendChild(errLine);
+
+    const hint = document.createElement('p');
+    hint.style.cssText = 'font-size:12px;color:#a0a0a0;margin-top:8px;';
+    hint.textContent = '请确保已打开网页，点击"重新检测"重试';
+    container.appendChild(hint);
+
+    els.loading.innerHTML = '';
+    els.loading.appendChild(container);
     els.loading.style.display = 'block';
     els.safePanel.style.display = 'none';
     els.warningPanel.style.display = 'none';
@@ -372,18 +382,15 @@
   let _reportedFalse = false;
   let _reportedPhish = false;
 
-  /** 获取按钮内部的 .btn-label 文字元素 */
-  function _btnLabel(btn) { return btn && btn.querySelector('.btn-label'); }
-
-  /** 根据当前页面状态 + 上报追踪 更新底部按钮文字 */
+  /** 根据当前页面状态 + 上报追踪 更新底部按钮 hover 提示文字 */
   function _setButtonTips(data) {
     const reportFalseBtn = document.getElementById('report-false-btn');
     const reportPhishBtn = document.getElementById('report-phish-btn');
-    if (reportFalseBtn && _btnLabel(reportFalseBtn)) _btnLabel(reportFalseBtn).textContent = _reportedFalse ? '已上报' : '误报';
-    if (reportPhishBtn && _btnLabel(reportPhishBtn)) _btnLabel(reportPhishBtn).textContent = _reportedPhish ? '已上报' : '钓鱼';
-    if (_btnLabel(els.whitelistBtn)) _btnLabel(els.whitelistBtn).textContent = (data && data.isWhitelisted) ? '已添加' : '白名单';
-    if (_btnLabel(els.blacklistBtn)) _btnLabel(els.blacklistBtn).textContent = (data && data.isSiteBlacklisted) ? '已添加' : '黑名单';
-    if (_btnLabel(els.refreshBtn)) _btnLabel(els.refreshBtn).textContent = '刷新';
+    if (reportFalseBtn) reportFalseBtn.setAttribute('data-tip', _reportedFalse ? '已上报' : '误报');
+    if (reportPhishBtn) reportPhishBtn.setAttribute('data-tip', _reportedPhish ? '已上报' : '钓鱼');
+    els.whitelistBtn.setAttribute('data-tip', (data && data.isWhitelisted) ? '已添加' : '白名单');
+    els.blacklistBtn.setAttribute('data-tip', (data && data.isSiteBlacklisted) ? '已添加' : '黑名单');
+    els.refreshBtn.setAttribute('data-tip', '刷新');
   }
 
   async function render() {
@@ -438,7 +445,7 @@
 
   els.refreshBtn.addEventListener('click', async () => {
     els.refreshBtn.classList.add('active');
-    if (_btnLabel(els.refreshBtn)) _btnLabel(els.refreshBtn).textContent = '刷新中';
+    els.refreshBtn.setAttribute('data-tip', '刷新中');
     els.refreshBtn.disabled = true;
     showLoading();
     await requestReanalysis();
@@ -513,7 +520,7 @@
   function _cancelPhishConfirm() {
     _phishConfirmPending = false;
     if (_phishConfirmTimer) { clearTimeout(_phishConfirmTimer); _phishConfirmTimer = null; }
-    if (_btnLabel(reportPhishBtn)) _btnLabel(reportPhishBtn).textContent = '钓鱼';
+    reportPhishBtn.setAttribute('data-tip', '钓鱼');
     reportPhishBtn.classList.remove('active', 'confirming');
     reportPhishBtn.disabled = false;
   }
@@ -523,7 +530,7 @@
       // 第一步：不是确认状态 → 进入确认状态
       if (!_phishConfirmPending) {
         _phishConfirmPending = true;
-        if (_btnLabel(reportPhishBtn)) _btnLabel(reportPhishBtn).textContent = '确认?';
+        reportPhishBtn.setAttribute('data-tip', '确定钓鱼?');
         reportPhishBtn.classList.add('active', 'confirming');
         // 3秒后自动取消确认
         _phishConfirmTimer = setTimeout(() => {
@@ -682,19 +689,27 @@
 
   // ==================== 初始化 ====================
 
-  /** 从 storage 读取主题并立即应用 */
+  /** 从 storage 读取主题并立即应用，auto 模式通过 matchMedia 解析 */
   async function applyTheme() {
     try {
       const stored = await chrome.storage.local.get('global_settings');
       const settings = stored && stored.global_settings ? stored.global_settings : {};
       const theme = settings.theme || 'dark';
-      document.documentElement.setAttribute('data-theme', theme);
-      // 同步到 localStorage 以便下次加载无闪烁
+      const resolved = theme === 'auto'
+        ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+        : theme;
+      document.documentElement.setAttribute('data-theme', resolved);
+      // 同步到 localStorage 以便下次加载无闪烁（存储原始值，由 theme-init.js 解析）
       try { localStorage.setItem('vt_theme', theme); } catch (e) { }
     } catch (e) {
       document.documentElement.setAttribute('data-theme', 'dark');
     }
   }
+
+  // 系统配色变化时，若主题为 auto 则实时切换
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    applyTheme();
+  });
 
   if (document.readyState === 'complete' || document.readyState === 'interactive') {
     applyTheme().then(() => { render(); checkUpdateBadge(); });

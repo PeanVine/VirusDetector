@@ -770,9 +770,9 @@ body {
   align-items: center;
   justify-content: center;
   white-space: nowrap;
-  overflow: hidden;
-  flex-shrink: 0;
-  min-width: 44px;
+  overflow: visible;
+  flex-shrink: 1;
+  min-width: fit-content;
   z-index: 3;
   position: relative;
 }
@@ -783,42 +783,42 @@ body {
   height: 20px;
 }
 
-/* ---- 按钮内部图标 + 文字动画容器 ---- */
-.btn-icon,
-.btn-label {
-  transition: left 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
-}
-
-/* 默认：图标在 flex 流中自然居中，文字绝对定位在图标右侧隐藏 */
-.btn-icon {
-  opacity: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.btn-label {
+/* ===== Footer Button Hover Tip — 悬浮提示文字从按钮后上滑 ===== */
+.footer-btn::after {
+  content: attr(data-tip);
   position: absolute;
-  left: calc(50% + 24px);
-  top: 19px;
-  transform: translateY(-50%);
-  opacity: 0;
+  bottom: calc(100% + 2px);
+  z-index: -1;
+  left: 50%;
+  transform: translateX(-50%) translateY(6px);
+  font-size: 15px;
   font-weight: 700;
   letter-spacing: 1px;
-  font-size: 16px;
-  pointer-events: none;
-}
-
-/* hover：图标左移渐出，文字从右侧滑入到图标原位 */
-.footer-btn:hover .btn-icon {
-  transform: translateX(-40px);
+  white-space: nowrap;
   opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
-.footer-btn:hover .btn-label {
-  left: 50%;
-  transform: translate(-50%, -50%);
+.footer-btn:hover::after {
   opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 各按钮提示文字颜色对应各自按钮颜色 */
+#report-false-btn::after { color: var(--orange); }
+#report-phish-btn::after { color: var(--red); }
+#whitelist-btn::after   { color: var(--wl-border); }
+#blacklist-btn::after   { color: var(--bl-border); }
+#refresh-btn::after     { color: var(--green); }
+
+
+/* ---- Button Label: always visible ---- */
+.btn-label {
+  padding-right: 10px;
+  overflow: hidden;
+  white-space: nowrap;
+  display: inline-block;
 }
 
 /* 各按钮文字颜色 */
@@ -846,14 +846,19 @@ body {
 
 /* ---- SVG transitions ---- */
 
-.footer-btn.active .btn-icon svg {
+.footer-btn.active svg {
   transform: scale(1.15);
 }
 
 /* Refresh button: spin instead of scale on active */
-#refresh-btn.active .btn-icon svg {
+#refresh-btn.active svg {
   transform: none;
   animation: spin 0.8s linear infinite;
+}
+
+#refresh-btn:hover:not(:disabled) {
+  border-color: var(--green);
+  color: var(--green);
 }
 
 .footer-version {
