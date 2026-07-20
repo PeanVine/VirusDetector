@@ -174,20 +174,21 @@
   function updateWhitelistButton(isWhitelisted) {
     const iconEl = els.whitelistBtn.querySelector('.btn-icon');
     if (isWhitelisted) {
-      els.whitelistBtn.innerHTML = ICONS.starOff;
+      if (iconEl) iconEl.innerHTML = ICONS.starOff;
       els.whitelistBtn.classList.add('active');
     } else {
-      els.whitelistBtn.innerHTML = ICONS.star ;
+      if (iconEl) iconEl.innerHTML = ICONS.star;
       els.whitelistBtn.classList.remove('active');
     }
   }
 
   function updateBlacklistButton(isBlacklisted) {
+    const iconEl = els.blacklistBtn.querySelector('.btn-icon');
     if (isBlacklisted) {
-      els.blacklistBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+      if (iconEl) iconEl.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
       els.blacklistBtn.classList.add('active');
     } else {
-      els.blacklistBtn.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+      if (iconEl) iconEl.innerHTML = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
       els.blacklistBtn.classList.remove('active');
     }
   }
@@ -382,15 +383,18 @@
   let _reportedFalse = false;
   let _reportedPhish = false;
 
-  /** 根据当前页面状态 + 上报追踪 更新底部按钮 hover 提示文字 */
+  /** 获取按钮内部的 .btn-label 文字元素 */
+  function _btnLabel(btn) { return btn && btn.querySelector('.btn-label'); }
+
+  /** 根据当前页面状态 + 上报追踪 更新底部按钮文字 */
   function _setButtonTips(data) {
     const reportFalseBtn = document.getElementById('report-false-btn');
     const reportPhishBtn = document.getElementById('report-phish-btn');
-    if (reportFalseBtn) reportFalseBtn.setAttribute('data-tip', _reportedFalse ? '已上报' : '误报');
-    if (reportPhishBtn) reportPhishBtn.setAttribute('data-tip', _reportedPhish ? '已上报' : '钓鱼');
-    els.whitelistBtn.setAttribute('data-tip', (data && data.isWhitelisted) ? '已添加' : '白名单');
-    els.blacklistBtn.setAttribute('data-tip', (data && data.isSiteBlacklisted) ? '已添加' : '黑名单');
-    els.refreshBtn.setAttribute('data-tip', '刷新');
+    if (reportFalseBtn && _btnLabel(reportFalseBtn)) _btnLabel(reportFalseBtn).textContent = _reportedFalse ? '已上报' : '误报';
+    if (reportPhishBtn && _btnLabel(reportPhishBtn)) _btnLabel(reportPhishBtn).textContent = _reportedPhish ? '已上报' : '钓鱼';
+    if (_btnLabel(els.whitelistBtn)) _btnLabel(els.whitelistBtn).textContent = (data && data.isWhitelisted) ? '已添加' : '白名单';
+    if (_btnLabel(els.blacklistBtn)) _btnLabel(els.blacklistBtn).textContent = (data && data.isSiteBlacklisted) ? '已添加' : '黑名单';
+    if (_btnLabel(els.refreshBtn)) _btnLabel(els.refreshBtn).textContent = '刷新';
   }
 
   async function render() {
@@ -445,7 +449,7 @@
 
   els.refreshBtn.addEventListener('click', async () => {
     els.refreshBtn.classList.add('active');
-    els.refreshBtn.setAttribute('data-tip', '刷新中');
+    if (_btnLabel(els.refreshBtn)) _btnLabel(els.refreshBtn).textContent = '刷新中';
     els.refreshBtn.disabled = true;
     showLoading();
     await requestReanalysis();
@@ -520,7 +524,7 @@
   function _cancelPhishConfirm() {
     _phishConfirmPending = false;
     if (_phishConfirmTimer) { clearTimeout(_phishConfirmTimer); _phishConfirmTimer = null; }
-    reportPhishBtn.setAttribute('data-tip', '钓鱼');
+    if (_btnLabel(reportPhishBtn)) _btnLabel(reportPhishBtn).textContent = '钓鱼';
     reportPhishBtn.classList.remove('active', 'confirming');
     reportPhishBtn.disabled = false;
   }
@@ -530,7 +534,7 @@
       // 第一步：不是确认状态 → 进入确认状态
       if (!_phishConfirmPending) {
         _phishConfirmPending = true;
-        reportPhishBtn.setAttribute('data-tip', '确定钓鱼?');
+        if (_btnLabel(reportPhishBtn)) _btnLabel(reportPhishBtn).textContent = '确认?';
         reportPhishBtn.classList.add('active', 'confirming');
         // 3秒后自动取消确认
         _phishConfirmTimer = setTimeout(() => {
