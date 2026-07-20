@@ -133,7 +133,7 @@ export const AI_PAGE_THRESHOLDS = {
 // ==================== 规则五子规则：关键词预筛选 + Emoji 密度检测 ====================
 /**
  * 先通过推广/产品关键词预筛选确定页面是否为推广性质，
- * 再基于 Emoji 密度进行分段线性加分（上限 30 分）。
+ * 再基于 Emoji 密度进行分段线性加分（上限 20 分）。
  *
  * 设计原理：
  *   - 正常页面 Emoji 密度通常极低
@@ -161,7 +161,7 @@ export const EMOJI_KEYWORD_MATCH_THRESHOLD = 1;
 export const EMOJI_MIN_TEXT_LENGTH = 100;
 
 /** Emoji 密度得分上限 */
-export const EMOJI_DENSITY_MAX_SCORE = 30;
+export const EMOJI_DENSITY_MAX_SCORE = 20;
 
 /** Emoji 密度下阈值（个/千字符），低于此值不加分 */
 export const EMOJI_DENSITY_THRESHOLD_LOW = 2.0;

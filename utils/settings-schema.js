@@ -158,7 +158,7 @@ export const SETTINGS_DEFAULTS = {
   emojiDensityCheck: true,
   emoji_keywordMatchThreshold: 1,
   emoji_minTextLength: 100,
-  emoji_densityMaxScore: 30,
+  emoji_densityMaxScore: 20,
   emoji_densityThresholdLow: 2.0,
   emoji_densityThresholdHigh: 10.0,
   code_signalsFull: 3,
