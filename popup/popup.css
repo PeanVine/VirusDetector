@@ -828,6 +828,13 @@ body {
 #blacklist-btn   .btn-label { color: var(--bl-border); }
 #refresh-btn     .btn-label { color: var(--green); }
 
+/* 各按钮文字颜色 */
+#report-false-btn .btn-label { color: var(--orange); }
+#report-phish-btn .btn-label { color: var(--red); }
+#whitelist-btn   .btn-label { color: var(--wl-border); }
+#blacklist-btn   .btn-label { color: var(--bl-border); }
+#refresh-btn     .btn-label { color: var(--green); }
+
 .footer-btn:hover {
   background: var(--bg-hover);
   color: var(--text);
@@ -854,6 +861,11 @@ body {
 #refresh-btn.active .btn-icon svg {
   transform: none;
   animation: spin 0.8s linear infinite;
+}
+
+#refresh-btn:hover:not(:disabled) {
+  border-color: var(--green);
+  color: var(--green);
 }
 
 .footer-version {

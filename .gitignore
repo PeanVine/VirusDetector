@@ -15,6 +15,7 @@ Thumbs.db
 # Test log files
 VirusDetectorLog/
 VirusDetectorDevFile/
+AUDIT_REPORT.md
 
 # node modules
 node_modules/
