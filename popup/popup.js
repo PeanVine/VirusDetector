@@ -332,11 +332,22 @@
   }
 
   function showError(msg) {
-    els.loading.innerHTML = '<div style="text-align:center;padding:20px;">' +
-      '<p style="color:#F44336;font-size:14px;">' +
-      '<svg viewBox="0 0 20 20" width="14" height="14" style="vertical-align:middle;margin-right:4px;"><path d="M10 2L1 18h18L10 2z" fill="#F44336"/><path d="M10 7v4M10 14.5v.5" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>' +
-      (msg || '无法获取检测结果') + '</p>' +
-      '<p style="font-size:12px;color:#a0a0a0;margin-top:8px;">请确保已打开网页，点击"重新检测"重试</p></div>';
+    const container = document.createElement('div');
+    container.style.cssText = 'text-align:center;padding:20px;';
+
+    const errLine = document.createElement('p');
+    errLine.style.cssText = 'color:#F44336;font-size:14px;';
+    errLine.innerHTML = '<svg viewBox="0 0 20 20" width="14" height="14" style="vertical-align:middle;margin-right:4px;"><path d="M10 2L1 18h18L10 2z" fill="#F44336"/><path d="M10 7v4M10 14.5v.5" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>';
+    errLine.appendChild(document.createTextNode(msg || '无法获取检测结果'));
+    container.appendChild(errLine);
+
+    const hint = document.createElement('p');
+    hint.style.cssText = 'font-size:12px;color:#a0a0a0;margin-top:8px;';
+    hint.textContent = '请确保已打开网页，点击"重新检测"重试';
+    container.appendChild(hint);
+
+    els.loading.innerHTML = '';
+    els.loading.appendChild(container);
     els.loading.style.display = 'block';
     els.safePanel.style.display = 'none';
     els.warningPanel.style.display = 'none';

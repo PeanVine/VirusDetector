@@ -226,7 +226,7 @@ export class ScoringEngine {
    */
   static async evaluateSync(ctx, settings = null) {
     const {
-      url, domain, pageText, icpStrings, hasIcpGovLink,
+      url, domain, textSignals, icpStrings, hasIcpGovLink,
       linkMetrics, downloadState, pageMetrics
     } = ctx;
 
@@ -239,7 +239,7 @@ export class ScoringEngine {
     const existingScore = result1.score;
 
     // 规则三：ICP检测（可通过设置关闭）
-    const result3 = resolveSetting('rule3Enabled', true) ? this._evaluateRule3(domain, pageText, icpStrings, hasIcpGovLink, undefined, ctx.icpApi, result1.triggered) : { score: 0, triggered: false, status: 'disabled', detail: '规则三已关闭', detailCN: 'ICP备案: 已关闭' };
+    const result3 = resolveSetting('rule3Enabled', true) ? this._evaluateRule3(domain, undefined, icpStrings, hasIcpGovLink, textSignals, ctx.icpApi, result1.triggered) : { score: 0, triggered: false, status: 'disabled', detail: '规则三已关闭', detailCN: 'ICP备案: 已关闭' };
 
     // 官方站点早期退出
     const isConfirmedOfficial = (
@@ -261,7 +261,7 @@ export class ScoringEngine {
       };
     } else {
       result4 = resolveSetting('rule4Enabled', true) ? this._evaluateRule4(linkMetrics, domain) : { score: 0, triggered: false, status: 'disabled', detail: '规则四已关闭', detailCN: '链接分析: 已关闭' };
-      result5 = resolveSetting('rule5Enabled', true) ? this._evaluateRule5(pageMetrics, domain, pageText) : { score: 0, triggered: false, status: 'disabled', detail: '规则五已关闭', detailCN: '代码工程化: 已关闭' };
+      result5 = resolveSetting('rule5Enabled', true) ? this._evaluateRule5(pageMetrics, domain, undefined, textSignals) : { score: 0, triggered: false, status: 'disabled', detail: '规则五已关闭', detailCN: '代码工程化: 已关闭' };
     }
 
     // 规则二：Phase A 主动扫描 + Phase B 被动检测
