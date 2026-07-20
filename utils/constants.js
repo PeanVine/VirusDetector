@@ -319,6 +319,7 @@ export const DOWNLOAD_BLACKLIST_CLEANUP_DAYS = 90;
 
 /** 黑名单容量上限（条） */
 export const DOWNLOAD_BLACKLIST_MAX_ENTRIES = 500;
+export const SITE_BLACKLIST_MAX_ENTRIES = 500;
 
 // ==================== Resource Resolver 配置 ====================
 /**
