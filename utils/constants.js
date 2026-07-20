@@ -133,7 +133,7 @@ export const AI_PAGE_THRESHOLDS = {
 // ==================== 规则五子规则：关键词预筛选 + Emoji 密度检测 ====================
 /**
  * 先通过推广/产品关键词预筛选确定页面是否为推广性质，
- * 再基于 Emoji 密度进行分段线性加分（上限 30 分）。
+ * 再基于 Emoji 密度进行分段线性加分（上限 20 分）。
  *
  * 设计原理：
  *   - 正常页面 Emoji 密度通常极低
@@ -161,7 +161,7 @@ export const EMOJI_KEYWORD_MATCH_THRESHOLD = 1;
 export const EMOJI_MIN_TEXT_LENGTH = 100;
 
 /** Emoji 密度得分上限 */
-export const EMOJI_DENSITY_MAX_SCORE = 30;
+export const EMOJI_DENSITY_MAX_SCORE = 20;
 
 /** Emoji 密度下阈值（个/千字符），低于此值不加分 */
 export const EMOJI_DENSITY_THRESHOLD_LOW = 2.0;
@@ -188,14 +188,9 @@ export const FRAMEWORK_HTML_MARKERS = [
 export const MSG_TYPES = {
   PAGE_ANALYSIS_RESULT: 'PAGE_ANALYSIS_RESULT',
   GET_TAB_STATE: 'GET_TAB_STATE',
-  DOWNLOAD_DETECTED: 'DOWNLOAD_DETECTED',
-  ICP_SCAN_RESULT: 'ICP_SCAN_RESULT',
   REQUEST_PAGE_TEXT: 'REQUEST_PAGE_TEXT',
-  UPDATE_SCORE: 'UPDATE_SCORE',
   GET_OFFICIAL_LINK: 'GET_OFFICIAL_LINK',
   CLEAR_TAB_STATE: 'CLEAR_TAB_STATE',
-  INJECT_DOWNLOAD_BLOCKER: 'INJECT_DOWNLOAD_BLOCKER',
-  TRIGGER_WARNING_FLOW: 'TRIGGER_WARNING_FLOW',
   ADD_TO_WHITELIST: 'ADD_TO_WHITELIST',
   REMOVE_FROM_WHITELIST: 'REMOVE_FROM_WHITELIST',
   CHECK_WHITELIST: 'CHECK_WHITELIST',
@@ -204,7 +199,6 @@ export const MSG_TYPES = {
   REMOVE_DOWNLOAD_BLACKLIST: 'REMOVE_DOWNLOAD_BLACKLIST',
   SUBMIT_REPORT: 'SUBMIT_REPORT',
   SETTINGS_UPDATED: 'SETTINGS_UPDATED',
-  GET_SETTINGS: 'GET_SETTINGS',
   UPDATE_SETTINGS: 'UPDATE_SETTINGS',
   BULK_UPDATE_WHITELIST: 'BULK_UPDATE_WHITELIST',
   CHECK_UPDATE: 'CHECK_UPDATE',
@@ -219,7 +213,6 @@ export const MSG_TYPES = {
 export const STORAGE_KEYS = {
   TAB_STATE_PREFIX: 'tab_state_',
   DOMAIN_CACHE: 'domain_cache_',
-  SSL_CACHE: 'ssl_cache_',
   GLOBAL_SETTINGS: 'global_settings',
   WHITELIST: 'whitelist',
   SITE_BLACKLIST: 'site_blacklist',
@@ -326,6 +319,7 @@ export const DOWNLOAD_BLACKLIST_CLEANUP_DAYS = 90;
 
 /** 黑名单容量上限（条） */
 export const DOWNLOAD_BLACKLIST_MAX_ENTRIES = 500;
+export const SITE_BLACKLIST_MAX_ENTRIES = 500;
 
 // ==================== Resource Resolver 配置 ====================
 /**

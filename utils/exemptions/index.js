@@ -74,6 +74,7 @@ export const ICP_EXEMPT_DOMAINS = new Set([
   'cloudflare.com', 'cloudflarepages.dev',
   'firebase.google.com', 'firebaseapp.com',
   'jetbrains.com',
+  'redhat.com',
 
   // —— 科研 ——
   'mathworks.com',
@@ -201,11 +202,6 @@ export const ICP_EXEMPT_DOMAINS = new Set([
   'gov.cn',
   'gov.hk',
   'gov.tw',
-  'go.jp',        // 日本政府
-  'go.kr',        // 韩国政府
-  'gov.uk',       // 英国政府
-  'gov.au',       // 澳大利亚政府
-  'gov.sg',       // 新加坡政府
 
   // —— 保留/专用域名（不暴露公网，无需 ICP 备案）——
   // 本地/内网专用（RFC 6761/6762/8375，不暴露公网）

@@ -58,7 +58,7 @@ test('Manifest V3 uses only a service worker background entry', () => {
   assert.equal(manifest.manifest_version, 3);
   assert.equal(manifest.background.service_worker, 'background/service-worker.js');
   assert.equal(manifest.background.type, 'module');
-  assert.equal('scripts' in manifest.background, false);
+  assert.equal(manifest.background.scripts, undefined);
 });
 
 test('navigation guard bypasses auth URLs and can unload for dynamic login', () => {

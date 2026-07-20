@@ -311,7 +311,8 @@ body {
 /* ===== Score Display ===== */
 .score-display {
   text-align: center;
-  padding:16px 16px 0px 16px;
+  width: ;
+  padding:16px 0px 0px 0px;
   border-radius: var(--radius);
   margin-bottom: 8px;
   position: relative;
@@ -333,6 +334,7 @@ body {
 
 .score-display.whitelist {
   background: rgba(76, 175, 80, 0.08);
+  padding-bottom: 4px;
 }
 
 .score-display.blacklist {
@@ -381,14 +383,13 @@ body {
 .score-gauge {
   position: relative;
   padding: 10px 0 0 0;
-  margin: 0 -16px;
   /* bleed to card edges, indicator left% aligns to card edge */
 }
 
 .gauge-bar {
   display: flex;
-  height: 10px;
-  border-radius: 0px 0px 5px 5px;
+  height: 5px;
+
   overflow: hidden;
   background: var(--bg);
 }
@@ -398,7 +399,7 @@ body {
 }
 
 .gauge-segment.gauge-green {
-  background: #4caf50;
+  background: #3f9942;
   width: 50%;
 }
 
@@ -444,15 +445,15 @@ body {
 /* ===== Status Badge ===== */
 .status-badge {
   text-align: center;
-  padding: 5px 16px;
-  border-radius: 20px;
+  padding: 2px 0px 6px 0;
   font-size: 16px;
   font-weight: 600;
   margin-bottom: 10px;
+    border-radius: 0px 0px 8px 8px;
 }
 
 .status-badge.safe {
-  background: var(--green);
+  background: #54b657;
   color: #fff;
 }
 
@@ -764,15 +765,15 @@ body {
   color: var(--text2);
   padding: 10px 19px;
   border-radius: 5px;
-  font-size: 18px;
+  font-size: 14px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
   white-space: nowrap;
-  overflow: visible;
-  flex-shrink: 1;
-  min-width: fit-content;
+  overflow: hidden;
+  flex-shrink: 0;
+  min-width: 44px;
   z-index: 3;
   position: relative;
 }
@@ -783,43 +784,57 @@ body {
   height: 20px;
 }
 
-/* ===== Footer Button Hover Tip — 悬浮提示文字从按钮后上滑 ===== */
-.footer-btn::after {
-  content: attr(data-tip);
+/* ---- 按钮内部图标 + 文字动画容器 ---- */
+.btn-icon,
+.btn-label {
+  transition: left 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
+}
+
+/* 默认：图标在 flex 流中自然居中，文字绝对定位在图标右侧隐藏 */
+.btn-icon {
+  opacity: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-label {
   position: absolute;
-  bottom: calc(100% + 2px);
-  z-index: -1;
-  left: 50%;
-  transform: translateX(-50%) translateY(6px);
-  font-size: 15px;
+  left: calc(50% + 24px);
+  top: 19px;
+  transform: translateY(-50%);
+  opacity: 0;
   font-weight: 700;
   letter-spacing: 1px;
-  white-space: nowrap;
-  opacity: 0;
+  font-size: 16px;
   pointer-events: none;
-  transition: opacity 0.25s ease, transform 0.25s ease;
 }
 
-.footer-btn:hover::after {
+/* hover：图标左移渐出，文字从右侧滑入到图标原位 */
+.footer-btn:hover .btn-icon {
+  transform: translateX(-40px);
+  opacity: 0;
+}
+
+.footer-btn:hover .btn-label {
+  left: 50%;
+  transform: translate(-50%, -50%);
   opacity: 1;
-  transform: translateX(-50%) translateY(0);
 }
 
-/* 各按钮提示文字颜色对应各自按钮颜色 */
-#report-false-btn::after { color: var(--orange); }
-#report-phish-btn::after { color: var(--red); }
-#whitelist-btn::after   { color: var(--wl-border); }
-#blacklist-btn::after   { color: var(--bl-border); }
-#refresh-btn::after     { color: var(--green); }
+/* 各按钮文字颜色 */
+#report-false-btn .btn-label { color: var(--orange); }
+#report-phish-btn .btn-label { color: var(--red); }
+#whitelist-btn   .btn-label { color: var(--wl-border); }
+#blacklist-btn   .btn-label { color: var(--bl-border); }
+#refresh-btn     .btn-label { color: var(--green); }
 
-
-/* ---- Button Label: always visible ---- */
-.btn-label {
-  padding-right: 10px;
-  overflow: hidden;
-  white-space: nowrap;
-  display: inline-block;
-}
+/* 各按钮文字颜色 */
+#report-false-btn .btn-label { color: var(--orange); }
+#report-phish-btn .btn-label { color: var(--red); }
+#whitelist-btn   .btn-label { color: var(--wl-border); }
+#blacklist-btn   .btn-label { color: var(--bl-border); }
+#refresh-btn     .btn-label { color: var(--green); }
 
 .footer-btn:hover {
   background: var(--bg-hover);
@@ -839,14 +854,19 @@ body {
 
 /* ---- SVG transitions ---- */
 
-.footer-btn.active svg {
+.footer-btn.active .btn-icon svg {
   transform: scale(1.15);
 }
 
 /* Refresh button: spin instead of scale on active */
-#refresh-btn.active svg {
+#refresh-btn.active .btn-icon svg {
   transform: none;
   animation: spin 0.8s linear infinite;
+}
+
+#refresh-btn:hover:not(:disabled) {
+  border-color: var(--green);
+  color: var(--green);
 }
 
 .footer-version {

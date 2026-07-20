@@ -22,7 +22,7 @@
  */
 
 import { 
-  STORAGE_KEYS, DOWNLOAD_BLACKLIST_MAX_ENTRIES
+  STORAGE_KEYS, SITE_BLACKLIST_MAX_ENTRIES
 } from '../utils/constants.js';
 import { UrlUtils } from '../utils/url-utils.js';
 
@@ -165,12 +165,12 @@ export class SiteBlacklist {
    */
   static _enforceCapacity(blacklist, newDomain) {
     const entries = Object.entries(blacklist);
-    if (entries.length < DOWNLOAD_BLACKLIST_MAX_ENTRIES) return;
+    if (entries.length < SITE_BLACKLIST_MAX_ENTRIES) return;
 
     // 按 addedAt 升序排列（最早添加的在前）
     entries.sort((a, b) => a[1].addedAt - b[1].addedAt);
 
-    const toRemove = entries.slice(0, entries.length - DOWNLOAD_BLACKLIST_MAX_ENTRIES + 1);
+    const toRemove = entries.slice(0, entries.length - SITE_BLACKLIST_MAX_ENTRIES + 1);
     for (const [domain] of toRemove) {
       delete blacklist[domain];
     }

@@ -165,16 +165,16 @@ const DOMAIN_DATABASE = [
     isChineseBrand: false
   },
   {
-    name: '谷歌搜索',
-    officialDomains: ['google.com', 'google.cn', 'google.com.hk', 'googlemail.com', 'gmail.com'],
+    name: '谷歌',
+    officialDomains: ['google.com', 'google.cn', 'googlemail.com', 'gmail.com', 'android.com', 'chromereleases.googleblog.com', 'chromium.org', 'chromium.googlesource.com'],
     correctUrl: 'https://www.google.com/',
     category: SOFTWARE_CATEGORIES.BROWSER,
-    keywords: ['google', 'Google', '谷歌', 'guge'],
+    keywords: ['google', 'Google', '谷歌'],
     isChineseBrand: false
   },
   {
     name: '谷歌浏览器',
-    officialDomains: ['google.com', 'google.cn'],
+    officialDomains: ['google.com', 'google.cn', 'chrome.com'],
     correctUrl: 'https://www.google.cn/chrome/',
     category: SOFTWARE_CATEGORIES.BROWSER,
     keywords: ['Chrome', 'Google Chrome', '谷歌浏览器', 'chrome', 'google', 'Google'],
@@ -199,7 +199,7 @@ const DOMAIN_DATABASE = [
 // ========== 即时通讯/社交 ==========
   {
     name: '微信',
-    officialDomains: ['weixin.qq.com', 'wechat.com'],
+    officialDomains: ['weixin.qq.com', 'wechat.com', 'redhat.com'],
     correctUrl: 'https://weixin.qq.com',
     category: SOFTWARE_CATEGORIES.IM_SOCIAL,
     keywords: ['微信', 'weixin', 'WeChat', 'wechat'],
@@ -227,14 +227,6 @@ const DOMAIN_DATABASE = [
     correctUrl: 'https://www.feishu.cn',
     category: SOFTWARE_CATEGORIES.IM_SOCIAL,
     keywords: ['飞书', 'feishu', 'Lark'],
-    isChineseBrand: true
-  },
-  {
-    name: '企业微信',
-    officialDomains: ['work.weixin.qq.com'],
-    correctUrl: 'https://work.weixin.qq.com',
-    category: SOFTWARE_CATEGORIES.IM_SOCIAL,
-    keywords: ['企业微信', 'wework', 'WeWork'],
     isChineseBrand: true
   },
   {
@@ -459,10 +451,10 @@ const DOMAIN_DATABASE = [
   },
   {
     name: 'QQ音乐',
-    officialDomains: ['y.qq.com', 'music.qq.com'],
+    officialDomains: ['y.qq.com', 'music.moekoe.cn'],
     correctUrl: 'https://y.qq.com',
     category: SOFTWARE_CATEGORIES.MUSIC,
-    keywords: ['QQ音乐', 'qq音乐', '腾讯音乐', 'qqmusic'],
+    keywords: ['QQ音乐', 'qq音乐', 'qqmusic'],
     isChineseBrand: true
   },
   {
@@ -573,7 +565,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: '通义千问',
-    officialDomains: ['tongyi.aliyun.com', 'qianwen.aliyun.com', 'qianwen.com', 'dashscope.console.aliyun.com'],
+    officialDomains: ['tongyi.aliyun.com', 'qianwen.aliyun.com', 'qianwen.com', 'dashscope.console.aliyun.com', 'chat.qwen.ai'],
     correctUrl: 'https://tongyi.aliyun.com',
     category: SOFTWARE_CATEGORIES.AI_CHAT,
     keywords: ['通义千问', 'tongyi', 'qianwen', '阿里', '千问', '百炼'],
@@ -635,6 +627,14 @@ const DOMAIN_DATABASE = [
     keywords: ['ChatGPT', 'chatgpt', 'OpenAI', 'openai'],
     isChineseBrand: false
   },
+  {
+    name: 'Longcat',
+    officialDomains: ['longcat.chat', 'meituan.com'],
+    correctUrl: 'https://longcat.ai',
+    category: SOFTWARE_CATEGORIES.AI_CHAT,
+    keywords: ['Longcat', 'longcat', '龙猫', '美团龙猫'],
+    isChineseBrand: true
+  },
 // ========== 下载工具 ==========
   {
     name: '迅雷',
@@ -671,7 +671,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: '7-Zip',
-    officialDomains: ['7-zip.org'],
+    officialDomains: ['7-zip.org', '7-zip.com'],
     correctUrl: 'https://www.7-zip.org',
     category: SOFTWARE_CATEGORIES.COMPRESSION,
     keywords: ['7-Zip', '7zip', '7z'],
@@ -748,6 +748,14 @@ const DOMAIN_DATABASE = [
     correctUrl: 'https://www.goofish.com',
     category: SOFTWARE_CATEGORIES.E_COMMERCE,
     keywords: ['闲鱼', 'goofish', 'xianyu'],
+    isChineseBrand: true
+  },
+  {
+    name: '雷神',
+    officialDomains: ['thunderobot.com'],
+    correctUrl: 'https://www.thunderobot.com',
+    category: SOFTWARE_CATEGORIES.E_COMMERCE,
+    keywords: ['雷神', 'thunderobot', '雷神商城', '雷神笔记本', '雷神电脑'],
     isChineseBrand: true
   },
 // ========== 地图/出行 ==========
@@ -882,7 +890,7 @@ const DOMAIN_DATABASE = [
   },
   {
     name: 'Github',
-    officialDomains: ['github.com', 'github.blog', 'hellogithub.com'],
+    officialDomains: ['github.com', 'github.blog', 'hellogithub.com', 'github.akams.cn'],
     correctUrl: 'https://www.github.com',
     category: SOFTWARE_CATEGORIES.DEVELOPER,
     keywords: ['Github', 'GitHub', 'hellogithub', 'github'],
@@ -895,6 +903,14 @@ const DOMAIN_DATABASE = [
     category: SOFTWARE_CATEGORIES.DEVELOPER,
     keywords: ['GitLab', 'gitlab'],
     isChineseBrand: false
+  },
+  {
+    name: 'CC Switch',
+    officialDomains: ['ccswitch.io', 'ccswitch.ai'],
+    correctUrl: 'https://www.ccswitch.io',
+    category: SOFTWARE_CATEGORIES.DEVELOPER,
+    keywords: ['cc Switch', 'cc switch'],
+    isChineseBrand: true
   },
 // ========== 系统工具 ==========
   {
